@@ -1,24 +1,26 @@
-# Sistema de Apoio à Decisão para Oferta Extraordinária de Disciplinas — UNIPAMPA
+# Sistema de Apoio à Decisão de Oferta de Disciplinas — UNIPAMPA
 
-Sistema de apoio à decisão para a coordenação acadêmica avaliar a oferta de
-disciplinas fora do semestre em que normalmente são ofertadas (ex.: uma
-disciplina ofertada regularmente só em semestres ímpares sendo avaliada
-para oferta também em um semestre par), com base em PPCs e históricos
-escolares dos alunos.
+Sistema de apoio à decisão para a coordenação acadêmica avaliar a demanda
+por disciplinas em dois cenários: (1) oferta extraordinária, fora do
+semestre em que a disciplina normalmente é ofertada; e (2) demanda no
+semestre regular, útil sobretudo quando a disciplina é compartilhada por
+vários cursos, com base em PPCs e históricos escolares dos alunos.
 
 ## Sobre o projeto
 
 Bolsa de Gestão Acadêmica — UNIPAMPA. O sistema não substitui o sistema
 acadêmico da universidade: ele consome exportações dele (PPCs e históricos
-em CSV) para estimar, para uma disciplina candidata, três grupos de alunos:
+em CSV) para estimar, para uma disciplina, três grupos de alunos:
 
 - **Matriculados** atualmente na disciplina.
 - **Aptos, não matriculados** — já cumpriram todos os pré-requisitos.
 - **Potenciais** — cursando algum pré-requisito agora, com probabilidade
   estimada de aprovação e, portanto, de matrícula futura.
 
-A soma desses grupos gera a demanda estimada, que orienta a decisão da
-coordenação.
+A soma desses grupos gera a demanda estimada — exibida por curso quando a
+disciplina é compartilhada (ex.: "5 alunos da Elétrica, 3 da Engenharia de
+Software") — que orienta a decisão da coordenação. O sistema **não**
+calcula número de turmas a abrir; entrega apenas a contagem de alunos.
 
 ## Documentação
 
@@ -29,7 +31,7 @@ A documentação completa do projeto está organizada em dois lugares:
   storyboard. Ponto de partida recomendado para quem está entrando no
   projeto agora.
 - **[`docs/`](./docs)** — documentação técnica versionada junto com o
-  código: system design e decisões de
+  código: system design, contratos de dados, schema do banco e decisões de
   arquitetura (ADRs). 
 
 ## Status do projeto
@@ -58,5 +60,5 @@ usar `data/sample/` com dados fictícios para qualquer exemplo versionado.
 
 ## Equipe
 
-- Bolsistas de gestão responsáveis pelo projeto: [Tauani Ximenes Sauceda e Izabel de Oliveira Boaventura]
+- Bolsistas de gestão responsáveis pelo projeto: [Tauani Sauceda e Izabel Boaventura]
 - Coordenação acadêmica: [Natalia Braun Chagas]
