@@ -1,7 +1,7 @@
 # System Design — Sistema de Apoio à Decisão de Oferta de Disciplinas
 
 > Local no repositório: `docs/arquitetura/system-design.md`
-> Última atualização: preencher data ao editar
+> Última atualização: 12/08/2026
 > Status: contratos de dados validados com os CSVs reais e com a coordenação de periodicidade (Seções 3 e 5); pendências restantes listadas na Seção 10
 
 ## 1. Visão geral
