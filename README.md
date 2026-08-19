@@ -44,8 +44,13 @@ ainda não iniciado.
 
 ```
 ├── docs/              # Documentação técnica (ver docs/README.md)
-├── etl/               # Scripts de importação dos CSVs (a criar)
 ├── src/                # Motor de regras: Grupos A/B/C, probabilidade (a criar)
+│  ├── backend/       # FastAPI — API REST + motor de regras
+│  │    ├── api/       # Rotas e endpoints
+│  │    ├── core/      # Motor de cálculo (Grupos A/B/C)
+│  │    └── db/        # Models SQLAlchemy + migrations Alembic
+│  └── frontend/      # React — painel de gestão
+├── etl/               # Scripts de importação dos CSVs (a criar)
 ├── data/
 │   ├── raw/           # Dados reais — NUNCA versionado (.gitignore)
 │   └── sample/        # Dados fictícios para desenvolvimento/testes
