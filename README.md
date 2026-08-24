@@ -1,4 +1,4 @@
-# Sistema de Apoio à Decisão de Oferta de Disciplinas — UNIPAMPA
+# OfertaPampa - Sistema de Apoio à Decisão de Oferta de Disciplinas — UNIPAMPA
 
 Sistema de apoio à decisão para a coordenação acadêmica avaliar a demanda
 por disciplinas em dois cenários: (1) oferta extraordinária, fora do
