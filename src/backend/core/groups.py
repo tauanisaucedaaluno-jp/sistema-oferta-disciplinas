@@ -122,16 +122,34 @@ def probabilidade_aprovacao_nivel1(db: Session, conceito_id: str) -> float:
     RN04.1 tratar como não-aprovado só para checagem de pré-requisito, não
     para esta taxa histórica).
     """
-    # Implementação real: buscar todas as linhas de Historico cujo
-    # (curso, disciplina_codigo) resolve para `conceito_id` (join com
-    # CodigoDisciplina), contar quantas têm situacao == 'aprovado' e
-    # quantas têm situacao == 'reprovado', e retornar aprovados / total.
-    # Esqueleto deixado aqui de propósito para não fingir que já está pronto
-    # sem termos os dados reais para validar o cálculo.
-    raise NotImplementedError(
-        "Implementar após termos histórico real carregado — ver Issue "
-        "'Grupo C: taxa histórica de aprovação (RN09)'."
+    from sqlalchemy import func
+    from db.models import CodigoDisciplina
+
+    query = (
+        db.query(Historico.situacao, func.count(Historico.id))
+        .join(
+            CodigoDisciplina,
+            (Historico.curso_codigo == CodigoDisciplina.curso_codigo) &
+            (Historico.disciplina_codigo == CodigoDisciplina.codigo)
+        )
+        .filter(CodigoDisciplina.conceito_id == conceito_id)
+        .filter(Historico.situacao.in_(["aprovado", "reprovado"]))
+        .group_by(Historico.situacao)
+        .all()
     )
+
+    aprovados = 0
+    reprovados = 0
+    for situacao, count in query:
+        if situacao == "aprovado":
+            aprovados += count
+        elif situacao == "reprovado":
+            reprovados += count
+
+    total = aprovados + reprovados
+    if total == 0:
+        return 0.0
+    return aprovados / total
 
 
 def grupo_c(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str) -> List[AlunoGrupoC]:
