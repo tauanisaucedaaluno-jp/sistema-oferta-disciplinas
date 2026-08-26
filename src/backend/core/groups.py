@@ -34,6 +34,21 @@ from core.resolvers import resolver_conceito
 ESTADOS_APROVADO = {"aprovado"}  # ver RN04 — já normalizado pelo ETL
 
 
+def _aluno_esta_ativo(db: Session, matricula: str) -> bool:
+    """RN05 — Retorna False se o aluno estiver evadido (Abandono, Cancelamento, etc.) no seu período mais recente."""
+    ultimo_historico = (
+        db.query(Historico)
+        .filter(Historico.aluno_matricula == matricula)
+        .order_by(Historico.periodo_letivo.desc(), Historico.id.desc())
+        .first()
+    )
+    if ultimo_historico and ultimo_historico.situacao_matricula in {
+        "Abandono", "Cancelamento", "Desligamento", "Falecimento", "Cancelamento Sisu", "Guri"
+    }:
+        return False
+    return True
+
+
 def _historico_do_aluno_no_conceito(
     db: Session, matricula: str, curso_codigo: str, conceito_id: str
 ) -> List[Historico]:
@@ -70,37 +85,66 @@ def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
 def grupo_b(db: Session, curso_codigo: str, conceito_id: str) -> List[str]:
     """
     RF08 — aptos e não matriculados: cumpriram TODOS os pré-requisitos
-    (ver nota sobre RN07 no topo do arquivo) e não estão, atualmente,
+    (suportando cláusulas E/OU via grupo_alternativo) e não estão, atualmente,
     aprovados ou cursando o próprio conceito.
     """
     pre_requisitos = (
-        db.query(PreRequisito.conceito_prerequisito_id)
+        db.query(PreRequisito)
         .filter(
             PreRequisito.curso_codigo == curso_codigo,
             PreRequisito.conceito_id == conceito_id,
         )
         .all()
     )
-    pre_requisito_ids = [p[0] for p in pre_requisitos]
+
+    req_obrigatorios = [p.conceito_prerequisito_id for p in pre_requisitos if p.grupo_alternativo is None]
+    
+    req_alternativos = {}
+    for p in pre_requisitos:
+        if p.grupo_alternativo is not None:
+            if p.grupo_alternativo not in req_alternativos:
+                req_alternativos[p.grupo_alternativo] = []
+            req_alternativos[p.grupo_alternativo].append(p.conceito_prerequisito_id)
 
     alunos_curso = db.query(Aluno.matricula).filter(Aluno.curso_codigo == curso_codigo).all()
     resultado = []
     for (matricula,) in alunos_curso:
-        cumpriu_todos = all(
-            any(
-                h.situacao in ESTADOS_APROVADO
-                for h in _historico_do_aluno_no_conceito(db, matricula, curso_codigo, pre_id)
-            )
-            for pre_id in pre_requisito_ids
-        )
-        if not cumpriu_todos:
+        if not _aluno_esta_ativo(db, matricula):
             continue
-
+        # Verifica se já passou ou está cursando a disciplina alvo
         historico_alvo = _historico_do_aluno_no_conceito(db, matricula, curso_codigo, conceito_id)
         ja_aprovado_ou_cursando = any(
             h.situacao in ESTADOS_APROVADO or h.situacao == "cursando" for h in historico_alvo
         )
-        if not ja_aprovado_ou_cursando:
+        if ja_aprovado_ou_cursando:
+            continue
+
+        # 1. Verifica se cumpriu todos os obrigatórios (E)
+        cumpriu_obrigatorios = all(
+            any(
+                h.situacao in ESTADOS_APROVADO
+                for h in _historico_do_aluno_no_conceito(db, matricula, curso_codigo, pre_id)
+            )
+            for pre_id in req_obrigatorios
+        )
+        if not cumpriu_obrigatorios:
+            continue
+
+        # 2. Verifica se cumpriu pelo menos um de cada grupo alternativo (OU)
+        cumpriu_alternativos = True
+        for grupo, pre_ids in req_alternativos.items():
+            passou_em_algum = any(
+                any(
+                    h.situacao in ESTADOS_APROVADO
+                    for h in _historico_do_aluno_no_conceito(db, matricula, curso_codigo, pre_id)
+                )
+                for pre_id in pre_ids
+            )
+            if not passou_em_algum:
+                cumpriu_alternativos = False
+                break
+        
+        if cumpriu_alternativos:
             resultado.append(matricula)
     return resultado
 
@@ -155,31 +199,92 @@ def probabilidade_aprovacao_nivel1(db: Session, conceito_id: str) -> float:
 def grupo_c(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str) -> List[AlunoGrupoC]:
     """RF09 — cursando algum pré-requisito agora, com probabilidade estimada."""
     pre_requisitos = (
-        db.query(PreRequisito.conceito_prerequisito_id)
+        db.query(PreRequisito)
         .filter(
             PreRequisito.curso_codigo == curso_codigo,
             PreRequisito.conceito_id == conceito_id,
         )
         .all()
     )
-    pre_requisito_ids = [p[0] for p in pre_requisitos]
+
+    if not pre_requisitos:
+        return []
+
+    req_obrigatorios = [p.conceito_prerequisito_id for p in pre_requisitos if p.grupo_alternativo is None]
+    
+    req_alternativos = {}
+    for p in pre_requisitos:
+        if p.grupo_alternativo is not None:
+            if p.grupo_alternativo not in req_alternativos:
+                req_alternativos[p.grupo_alternativo] = []
+            req_alternativos[p.grupo_alternativo].append(p.conceito_prerequisito_id)
 
     alunos_curso = db.query(Aluno.matricula).filter(Aluno.curso_codigo == curso_codigo).all()
     resultado = []
     for (matricula,) in alunos_curso:
-        for pre_id in pre_requisito_ids:
-            historico = _historico_do_aluno_no_conceito(db, matricula, curso_codigo, pre_id)
-            cursando = any(
-                h.periodo_letivo == periodo_atual and h.situacao == "cursando" for h in historico
-            )
+        if not _aluno_esta_ativo(db, matricula):
+            continue
+        # Primeiro, verifica se já passou ou está cursando a disciplina alvo
+        historico_alvo = _historico_do_aluno_no_conceito(db, matricula, curso_codigo, conceito_id)
+        ja_aprovado_ou_cursando = any(
+            h.situacao in ESTADOS_APROVADO or h.situacao == "cursando" for h in historico_alvo
+        )
+        if ja_aprovado_ou_cursando:
+            continue
+
+        caminho_viavel = True
+        prereqs_cursando_agora = []
+        
+        # 1. Checa obrigatórios (E)
+        for pre_id in req_obrigatorios:
+            hist_pre = _historico_do_aluno_no_conceito(db, matricula, curso_codigo, pre_id)
+            passou = any(h.situacao in ESTADOS_APROVADO for h in hist_pre)
+            cursando = any(h.periodo_letivo == periodo_atual and h.situacao == "cursando" for h in hist_pre)
+            
+            if not (passou or cursando):
+                caminho_viavel = False
+                break
             if cursando:
-                resultado.append(
-                    AlunoGrupoC(
-                        matricula=matricula,
-                        probabilidade_aprovacao=probabilidade_aprovacao_nivel1(db, pre_id),
-                    )
+                prereqs_cursando_agora.append(pre_id)
+                
+        if not caminho_viavel:
+            continue
+            
+        # 2. Checa alternativos (OU)
+        for grupo, pre_ids in req_alternativos.items():
+            passou_em_algum = False
+            cursando_algum = None
+            
+            for pre_id in pre_ids:
+                hist_pre = _historico_do_aluno_no_conceito(db, matricula, curso_codigo, pre_id)
+                if any(h.situacao in ESTADOS_APROVADO for h in hist_pre):
+                    passou_em_algum = True
+                    break
+                if any(h.periodo_letivo == periodo_atual and h.situacao == "cursando" for h in hist_pre):
+                    cursando_algum = pre_id
+            
+            if not (passou_em_algum or cursando_algum is not None):
+                caminho_viavel = False
+                break
+                
+            if not passou_em_algum and cursando_algum is not None:
+                prereqs_cursando_agora.append(cursando_algum)
+                
+        if not caminho_viavel:
+            continue
+            
+        # Para ser Grupo C, o aluno precisa estar cursando PELO MENOS UM pré-requisito agora
+        if prereqs_cursando_agora:
+            probabilidade = 1.0
+            for pre_id in prereqs_cursando_agora:
+                probabilidade *= probabilidade_aprovacao_nivel1(db, pre_id)
+                
+            resultado.append(
+                AlunoGrupoC(
+                    matricula=matricula,
+                    probabilidade_aprovacao=round(probabilidade, 4),
                 )
-                break  # RF09: um aluno entra uma vez no grupo por conceito-alvo
+            )
     return resultado
 
 

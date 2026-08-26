@@ -141,29 +141,29 @@ def seed_data(db: Session):
     # --- 8. HISTÓRICO ESCOLAR ---
     historicos = [
         # Aluno 1: Ingressou em 2018. Cursou e passou em tudo.
-        Historico(aluno_matricula="18010001", curso_codigo="CC", disciplina_codigo="AL0001", periodo_letivo="2018/1", situacao="aprovado", situacao_matricula="Aluno Regular", nota=7.5),
-        Historico(aluno_matricula="18010001", curso_codigo="CC", disciplina_codigo="AL0002", periodo_letivo="2018/2", situacao="aprovado", situacao_matricula="Aluno Regular", nota=6.0),
-        Historico(aluno_matricula="18010001", curso_codigo="CC", disciplina_codigo="AL0003", periodo_letivo="2019/1", situacao="aprovado", situacao_matricula="Aluno Regular", nota=8.0),
+        Historico(aluno_matricula="18010001", curso_codigo="CC", disciplina_codigo="AL0001", periodo_letivo="2018/1", situacao="aprovado", situacao_matricula="Aluno Regular"),
+        Historico(aluno_matricula="18010001", curso_codigo="CC", disciplina_codigo="AL0002", periodo_letivo="2018/2", situacao="aprovado", situacao_matricula="Aluno Regular"),
+        Historico(aluno_matricula="18010001", curso_codigo="CC", disciplina_codigo="AL0003", periodo_letivo="2019/1", situacao="aprovado", situacao_matricula="Aluno Regular"),
         
         # Aluno 2: Aprovado em Calc I, reprovou no Calc II e está cursando Calc II novamente.
-        Historico(aluno_matricula="23010002", curso_codigo="CC", disciplina_codigo="AL0363", periodo_letivo="2023/1", situacao="aprovado", situacao_matricula="Aluno Regular", nota=8.5),
-        Historico(aluno_matricula="23010002", curso_codigo="CC", disciplina_codigo="AL0364", periodo_letivo="2023/2", situacao="reprovado", situacao_matricula="Aluno Regular", nota=4.0),
+        Historico(aluno_matricula="23010002", curso_codigo="CC", disciplina_codigo="AL0363", periodo_letivo="2023/1", situacao="aprovado", situacao_matricula="Aluno Regular"),
+        Historico(aluno_matricula="23010002", curso_codigo="CC", disciplina_codigo="AL0364", periodo_letivo="2023/2", situacao="reprovado", situacao_matricula="Aluno Regular"),
         Historico(aluno_matricula="23010002", curso_codigo="CC", disciplina_codigo="AL0364", periodo_letivo="2024/1", situacao="cursando", situacao_matricula="Aluno Regular"),
 
         # Aluno 3: Cursando Cálculo I atualmente em 2024/1.
         Historico(aluno_matricula="24010003", curso_codigo="CC", disciplina_codigo="AL0363", periodo_letivo="2024/1", situacao="cursando", situacao_matricula="Aluno Regular"),
 
         # Aluno 4: Reprovou em Cálculo I e evadiu (Abandono - deve ser ignorado em Grupo B/C pela RN05)
-        Historico(aluno_matricula="24010004", curso_codigo="CC", disciplina_codigo="AL0363", periodo_letivo="2024/1", situacao="reprovado", situacao_matricula="Abandono", nota=2.0),
+        Historico(aluno_matricula="24010004", curso_codigo="CC", disciplina_codigo="AL0363", periodo_letivo="2024/1", situacao="reprovado", situacao_matricula="Abandono"),
 
         # Aluno 5: Aprovado em Cálculo I, está cursando Prog I em 2024/1.
         # Não tem histórico de Cálculo II, logo estará apto a cursá-lo em 2024/2 (Grupo B).
-        Historico(aluno_matricula="24010005", curso_codigo="CC", disciplina_codigo="AL0363", periodo_letivo="2024/1", situacao="aprovado", situacao_matricula="Aluno Regular", nota=9.0),
+        Historico(aluno_matricula="24010005", curso_codigo="CC", disciplina_codigo="AL0363", periodo_letivo="2024/1", situacao="aprovado", situacao_matricula="Aluno Regular"),
         Historico(aluno_matricula="24010005", curso_codigo="CC", disciplina_codigo="AL0102", periodo_letivo="2024/1", situacao="cursando", situacao_matricula="Aluno Regular"),
     ]
     db.add_all(historicos)
     db.commit()
-
+ 
     print("População do banco concluída com sucesso!")
 
 

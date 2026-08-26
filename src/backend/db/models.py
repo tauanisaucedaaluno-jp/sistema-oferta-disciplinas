@@ -130,6 +130,7 @@ class PreRequisito(Base):
     curso_codigo = Column(String, nullable=False)
     conceito_id = Column(String, nullable=False)
     conceito_prerequisito_id = Column(String, ForeignKey("conceito_disciplina.id"), nullable=False)
+    grupo_alternativo = Column(Integer, nullable=True)
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -172,7 +173,6 @@ class Historico(Base):
     # cursando / trancado / indefinido — nunca o texto bruto do CSV.
     situacao = Column(String, nullable=False)
     situacao_matricula = Column(String, nullable=True)  # RN05 — Aluno Regular, Abandono etc.
-    nota = Column(Float, nullable=True)
 
 
 class Usuario(Base):

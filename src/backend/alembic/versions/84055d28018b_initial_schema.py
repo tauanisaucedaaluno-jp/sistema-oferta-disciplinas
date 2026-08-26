@@ -77,7 +77,6 @@ def upgrade() -> None:
     sa.Column('periodo_letivo', sa.String(), nullable=False),
     sa.Column('situacao', sa.String(), nullable=False),
     sa.Column('situacao_matricula', sa.String(), nullable=True),
-    sa.Column('nota', sa.Float(), nullable=True),
     sa.ForeignKeyConstraint(['aluno_matricula'], ['aluno.matricula'], ),
     sa.ForeignKeyConstraint(['curso_codigo'], ['curso.codigo'], ),
     sa.PrimaryKeyConstraint('id')

@@ -44,13 +44,14 @@ INSERT INTO aluno (matricula, curso_codigo, semestre_ingresso) VALUES
 ('2020001', 'CC', '2020/1'),
 ('2021002', 'CC', '2021/1'),
 ('2022003', 'ES', '2022/1');
+('2022003', 'ES', '2022/1');
 
 -- 8. Histórico Escolar
-INSERT INTO historico (aluno_matricula, curso_codigo, disciplina_codigo, periodo_letivo, situacao, situacao_matricula, nota) VALUES 
-('2020001', 'CC', 'AL0001', '2020/1', 'reprovado', 'Aluno Regular', 3.5),
-('2020001', 'CC', 'AL0363', '2021/1', 'aprovado', 'Aluno Regular', 7.0),
-('2021002', 'CC', 'AL0363', '2026/1', 'cursando', 'Aluno Regular', NULL),
-('2022003', 'ES', 'ES0001', '2022/1', 'aprovado', 'Aluno Regular', 9.0);
+INSERT INTO historico (aluno_matricula, curso_codigo, disciplina_codigo, periodo_letivo, situacao, situacao_matricula) VALUES 
+('2020001', 'CC', 'AL0001', '2020/1', 'reprovado', 'Aluno Regular'),
+('2020001', 'CC', 'AL0363', '2021/1', 'aprovado', 'Aluno Regular'),
+('2021002', 'CC', 'AL0363', '2026/1', 'cursando', 'Aluno Regular'),
+('2022003', 'ES', 'ES0001', '2022/1', 'aprovado', 'Aluno Regular');
 
 -- 9. Usuário (senha: admin123 hash via bcrypt)
 INSERT INTO usuario (email, senha_hash, papel, ativo) VALUES 

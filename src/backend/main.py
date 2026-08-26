@@ -34,10 +34,8 @@ def health_check():
     return {"status": "ok"}
 
 
-# À medida que os endpoints forem sendo implementados (ver divisão de
-# issues — Epic 4), registre os routers aqui, por exemplo:
-#
-# from api.auth import router as auth_router
-# from api.demanda import router as demanda_router
-# app.include_router(auth_router, prefix="/auth", tags=["autenticação"])
-# app.include_router(demanda_router, prefix="/demanda", tags=["demanda"])
+from api.auth import router as auth_router
+from api.demanda import router as demanda_router
+
+app.include_router(auth_router, prefix="/auth", tags=["autenticação"])
+app.include_router(demanda_router, prefix="/demanda", tags=["demanda"])
