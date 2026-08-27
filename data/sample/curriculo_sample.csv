@@ -1,0 +1,11 @@
+cod_curso;curso;cod_disciplina;nome_disciplina;tipo_disciplina;periodo_ideal;pre-requisitos;equivalencias;situacao;num_versao
+CC;Ciencia da Computacao;AL0001;CALCULO I;Obrigatoria;1.0;;;ATIVA;2018
+CC;Ciencia da Computacao;AL0363;CALCULO I;Obrigatoria;1.0;;;ATIVA;2023
+CC;Ciencia da Computacao;AL0002;CALCULO II;Obrigatoria;2.0;AL0001-CALCULO I;;ATIVA;2018
+CC;Ciencia da Computacao;AL0364;CALCULO II;Obrigatoria;2.0;AL0363-CALCULO I;;ATIVA;2023
+CC;Ciencia da Computacao;AL0003;CALCULO III;Obrigatoria;3.0;AL0002-CALCULO II;;ATIVA;2018
+CC;Ciencia da Computacao;AL0365;CALCULO III;Obrigatoria;3.0;AL0364-CALCULO II;;ATIVA;2023
+CC;Ciencia da Computacao;AL0101;PROGRAMACAO I;Obrigatoria;1.0;;;ATIVA;2018
+CC;Ciencia da Computacao;AL0102;PROGRAMACAO I;Obrigatoria;1.0;;;ATIVA;2023
+CC;Ciencia da Computacao;FIS001;FISICA I;Obrigatoria;1.0;;;ATIVA;2023
+CC;Ciencia da Computacao;FIS002;FISICA II;Obrigatoria;2.0;FIS001-FISICA I;;ATIVA;2023

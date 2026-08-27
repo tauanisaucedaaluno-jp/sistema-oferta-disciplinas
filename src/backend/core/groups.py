@@ -68,6 +68,19 @@ def _historico_do_aluno_no_conceito(
     ]
 
 
+def _periodo_mesmo(p1: str, p2: str) -> bool:
+    """Verifica se dois períodos letivos representam o mesmo semestre (ex.: '2026/1' == '20261' == '2026/01')."""
+    if not p1 or not p2:
+        return False
+    c1 = p1.replace("/", "").replace("-", "").strip()
+    c2 = p2.replace("/", "").replace("-", "").strip()
+    if len(c1) == 6 and c1[4] == "0":
+        c1 = c1[:4] + c1[5]
+    if len(c2) == 6 and c2[4] == "0":
+        c2 = c2[:4] + c2[5]
+    return c1 == c2
+
+
 def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str) -> List[str]:
     """RF07 — matrículas dos alunos cursando o conceito agora."""
     alunos_curso = db.query(Aluno.matricula).filter(Aluno.curso_codigo == curso_codigo).all()
@@ -75,7 +88,7 @@ def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
     for (matricula,) in alunos_curso:
         historico = _historico_do_aluno_no_conceito(db, matricula, curso_codigo, conceito_id)
         cursando_agora = any(
-            h.periodo_letivo == periodo_atual and h.situacao == "cursando" for h in historico
+            _periodo_mesmo(h.periodo_letivo, periodo_atual) and h.situacao == "cursando" for h in historico
         )
         if cursando_agora:
             resultado.append(matricula)
@@ -239,7 +252,7 @@ def grupo_c(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
         for pre_id in req_obrigatorios:
             hist_pre = _historico_do_aluno_no_conceito(db, matricula, curso_codigo, pre_id)
             passou = any(h.situacao in ESTADOS_APROVADO for h in hist_pre)
-            cursando = any(h.periodo_letivo == periodo_atual and h.situacao == "cursando" for h in hist_pre)
+            cursando = any(_periodo_mesmo(h.periodo_letivo, periodo_atual) and h.situacao == "cursando" for h in hist_pre)
             
             if not (passou or cursando):
                 caminho_viavel = False
@@ -260,7 +273,7 @@ def grupo_c(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
                 if any(h.situacao in ESTADOS_APROVADO for h in hist_pre):
                     passou_em_algum = True
                     break
-                if any(h.periodo_letivo == periodo_atual and h.situacao == "cursando" for h in hist_pre):
+                if any(_periodo_mesmo(h.periodo_letivo, periodo_atual) and h.situacao == "cursando" for h in hist_pre):
                     cursando_algum = pre_id
             
             if not (passou_em_algum or cursando_algum is not None):

@@ -10,7 +10,9 @@ function App() {
   const [token, setToken] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>("login");
   const [selectedConceitoId, setSelectedConceitoId] = useState<string | null>(null);
-  const [selectedPeriodo, setSelectedPeriodo] = useState<string>("2024/1");
+  const [curso, setCurso] = useState<string>("TODOS");
+  const [periodo, setPeriodo] = useState<string>("2026/1");
+  const [modo, setModo] = useState<string>("regular");
   const [cursoCodigo, setCursoCodigo] = useState<string>("CC");
 
   useEffect(() => {
@@ -35,17 +37,22 @@ function App() {
     setSelectedConceitoId(null);
   };
 
-  const handleSelectDisciplina = (conceitoId: string, periodo: string) => {
+  const handleSelectDisciplina = (conceitoId: string, itemCursoCodigo: string, itemPeriodo: string) => {
     setSelectedConceitoId(conceitoId);
-    setSelectedPeriodo(periodo);
-    // Extrai o código do curso a partir do prefixo do conceito (ex: "CC-CALC1" -> "CC")
-    const parts = conceitoId.split("-");
-    if (parts.length > 0) {
-      setCursoCodigo(parts[0]);
-    } else {
-      setCursoCodigo("CC");
-    }
+    setCursoCodigo(itemCursoCodigo);
+    setPeriodo(itemPeriodo);
     setCurrentPage("detalhe");
+  };
+
+  /** Decodifica o payload do JWT (sem validar assinatura — só para exibição) */
+  const getUserEmail = (): string => {
+    if (!token) return "";
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      return payload.sub || "";
+    } catch {
+      return "";
+    }
   };
 
   return (
@@ -57,6 +64,13 @@ function App() {
       {currentPage === "dashboard" && token && (
         <Dashboard
           token={token}
+          userEmail={getUserEmail()}
+          curso={curso}
+          setCurso={setCurso}
+          periodo={periodo}
+          setPeriodo={setPeriodo}
+          modo={modo}
+          setModo={setModo}
           onLogout={handleLogout}
           onSelectDisciplina={handleSelectDisciplina}
         />
@@ -67,14 +81,12 @@ function App() {
           token={token}
           cursoCodigo={cursoCodigo}
           conceitoId={selectedConceitoId}
-          periodo={selectedPeriodo}
+          periodo={periodo}
           onBack={() => setCurrentPage("dashboard")}
         />
       )}
     </>
   );
 }
-
-export default App;
 
 export default App;

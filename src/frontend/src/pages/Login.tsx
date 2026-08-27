@@ -5,6 +5,8 @@ interface LoginProps {
   onLoginSuccess: (token: string) => void;
 }
 
+const API_BASE = "http://localhost:8000";
+
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
@@ -17,7 +19,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:8001/auth/login", {
+      const response = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -44,7 +46,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       <div className="login-card">
         <div className="login-header">
           <img src={logoImg} alt="OfertaPampa Logo" className="login-logo" />
-          <h2>Acesso ao Painel</h2>
+          <h2>Olá, bem-vinda(o)!</h2>
           <p>Digite suas credenciais de coordenador para gerenciar a oferta</p>
         </div>
 
@@ -79,6 +81,10 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             {loading ? "Entrando..." : "Entrar no Sistema"}
           </button>
         </form>
+
+        <div className="login-hint">
+          <p>🔑 Credenciais de teste: <code>coordenador@unipampa.edu.br</code> / <code>admin123</code></p>
+        </div>
       </div>
     </div>
   );

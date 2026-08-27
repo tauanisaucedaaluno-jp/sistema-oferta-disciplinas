@@ -1,5 +1,6 @@
 -- Script de Seed SQL para o MVP (Dados Falsos)
 -- Local: data/sample/seed.sql
+-- Senha do usuário coordenador: admin123
 
 -- 1. Limpeza das tabelas (Ordem reversa das dependências)
 DELETE FROM log_acesso;
@@ -44,7 +45,6 @@ INSERT INTO aluno (matricula, curso_codigo, semestre_ingresso) VALUES
 ('2020001', 'CC', '2020/1'),
 ('2021002', 'CC', '2021/1'),
 ('2022003', 'ES', '2022/1');
-('2022003', 'ES', '2022/1');
 
 -- 8. Histórico Escolar
 INSERT INTO historico (aluno_matricula, curso_codigo, disciplina_codigo, periodo_letivo, situacao, situacao_matricula) VALUES 
@@ -53,6 +53,7 @@ INSERT INTO historico (aluno_matricula, curso_codigo, disciplina_codigo, periodo
 ('2021002', 'CC', 'AL0363', '2026/1', 'cursando', 'Aluno Regular'),
 ('2022003', 'ES', 'ES0001', '2022/1', 'aprovado', 'Aluno Regular');
 
--- 9. Usuário (senha: admin123 hash via bcrypt)
+-- 9. Usuário de teste (senha: admin123)
+-- Hash gerado com bcrypt, 12 rounds
 INSERT INTO usuario (email, senha_hash, papel, ativo) VALUES 
-('coordenador@unipampa.edu.br', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjIQqiRQYq', 'coordenador', true);
+('coordenador@unipampa.edu.br', '$2b$12$XQzaewwEPBDv5uuvv4nloeN5mi4pRb5w.Alse/WzmMnjt1AJ/Popq', 'coordenador', true);

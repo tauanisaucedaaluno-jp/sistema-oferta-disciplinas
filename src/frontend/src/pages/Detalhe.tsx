@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import logoImg from "../assets/logo.png";
 
 interface AlunoGrupoC {
   matricula: string;
@@ -8,7 +9,12 @@ interface AlunoGrupoC {
 interface DetalheDemanda {
   conceito_id: string;
   disciplina_nome: string;
+  curso_codigo: string;
+  curso_nome: string;
+  periodo_sugerido: number | null;
+  periodicidade_oferta: string | null;
   demanda_estimada: number;
+  total_alunos: number;
   grupo_a: string[];
   grupo_b: string[];
   grupo_c: AlunoGrupoC[];
@@ -22,6 +28,8 @@ interface DetalheProps {
   onBack: () => void;
 }
 
+const API_BASE = "http://localhost:8000";
+
 export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBack }: DetalheProps) {
   const [detalhe, setDetalhe] = useState<DetalheDemanda | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,7 +42,7 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
       setError(null);
       try {
         const response = await fetch(
-          `http://localhost:8001/demanda/detalhe?curso_codigo=${cursoCodigo}&conceito_id=${conceitoId}&periodo_atual=${periodo}`,
+          `${API_BASE}/demanda/detalhe?curso_codigo=${cursoCodigo}&conceito_id=${conceitoId}&periodo_atual=${periodo}`,
           {
             method: "GET",
             headers: {
@@ -44,7 +52,8 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
         );
 
         if (!response.ok) {
-          throw new Error("Erro ao carregar o detalhamento da disciplina.");
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || "Erro ao carregar o detalhamento da disciplina.");
         }
 
         const data = await response.json();
@@ -61,30 +70,62 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
 
   return (
     <div className="detalhe-container">
-      <header className="detalhe-header">
-        <button onClick={onBack} className="btn btn-outline">
-          &larr; Voltar ao Dashboard
-        </button>
-        <span className="period-label">Análise para o Período {periodo}</span>
+      <header className="dashboard-header">
+        <div
+          className="header-logo-group clickable-logo"
+          onClick={onBack}
+          title="Voltar para a tela principal"
+        >
+          <img src={logoImg} alt="OfertaPampa Logo" className="dashboard-logo" />
+          <div className="header-titles">
+            <h1>OfertaPampa</h1>
+            <span className="badge-unipampa">UNIPAMPA</span>
+          </div>
+        </div>
+        <div className="header-actions">
+          <span className="period-label" style={{ marginRight: "0.5rem" }}>
+            Período: {periodo}
+          </span>
+          <button onClick={onBack} className="btn btn-outline-danger btn-sm">
+            &larr; Voltar ao Dashboard
+          </button>
+        </div>
       </header>
 
       {loading ? (
         <div className="detail-loading">Carregando detalhes da disciplina...</div>
       ) : error ? (
-        <div className="detail-error">Erro: {error}</div>
+        <div className="detail-error">
+          <strong>Erro:</strong> {error}
+          <button onClick={onBack} className="btn btn-outline" style={{ marginTop: "1rem" }}>
+            Voltar ao Dashboard
+          </button>
+        </div>
       ) : !detalhe ? (
         <div className="detail-empty">Nenhum dado retornado.</div>
       ) : (
         <main className="detalhe-content">
           <div className="detail-hero-card">
             <div className="detail-info">
-              <span className="concept-id-badge">{detalhe.conceito_id}</span>
+              <div className="detail-badges-row">
+                <span className="concept-id-badge">{detalhe.conceito_id}</span>
+                <span className="course-badge">{detalhe.curso_nome} ({detalhe.curso_codigo})</span>
+                {detalhe.periodo_sugerido && (
+                  <span className="semester-badge">{detalhe.periodo_sugerido}º Semestre (Grade Ideal)</span>
+                )}
+                {detalhe.periodicidade_oferta && (
+                  <span className="periodicity-badge">
+                    Oferta: {detalhe.periodicidade_oferta === "ambos" ? "Semestral (Ambos)" : detalhe.periodicidade_oferta === "impar" ? "Semestres Ímpares" : "Semestres Pares"}
+                  </span>
+                )}
+              </div>
               <h2>{detalhe.disciplina_nome}</h2>
-              <p>Mapeamento detalhado de alunos elegíveis e estimativa matemática</p>
+              <p>Mapeamento detalhado de alunos elegíveis e estimativa matemática para o curso de {detalhe.curso_nome}</p>
             </div>
             <div className="detail-score">
               <span className="score-value">{detalhe.demanda_estimada}</span>
               <span className="score-label">Demanda Estimada</span>
+              <span className="score-sublabel">{detalhe.total_alunos} alunos no total</span>
             </div>
           </div>
 

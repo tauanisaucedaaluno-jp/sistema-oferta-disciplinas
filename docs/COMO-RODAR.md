@@ -1,51 +1,160 @@
-# Como rodar o ambiente localmente
+# Como rodar o sistema — OfertaPampa (dados de teste)
 
-## 1. Banco de dados (PostgreSQL via Docker)
+Guia atualizado em: 2026-08-27
 
-```bash
+---
+
+## Pré-requisitos
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e **rodando**
+- [Python 3.11+](https://www.python.org/) com `venv`
+- [Node.js 18+](https://nodejs.org/) com `npm`
+- Você está na raiz do repositório: `sistema-oferta-disciplinas/`
+
+---
+
+## Passo 1 — Subir o banco de dados (Postgres)
+
+```powershell
 docker compose up -d
 ```
 
-Isso sobe um Postgres em `localhost:5432` com usuário `oferta`, senha
-`oferta_dev_local`, banco `oferta_disciplinas` (ver `docker-compose.yml`).
-Não precisa instalar Postgres na máquina.
+Isso sobe o Postgres na porta `5432` em background. Para verificar:
 
-## 2. Backend (FastAPI)
-
-```bash
-cd src/backend
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env            # ajuste se necessário
+```powershell
+docker compose ps
 ```
 
-Depois de configurar o Alembic (ver Epic 0, Issue 3 no guia de
-implementação) e rodar a primeira migração:
+A coluna `Status` deve mostrar `running`.
 
-```bash
+---
+
+## Passo 2 — Configurar o backend
+
+Já existe um arquivo `.env` pronto em `src/backend/`. Se não existir, copie:
+
+```powershell
+Copy-Item src\backend\.env.example src\backend\.env
+```
+
+Ative o ambiente virtual (se ainda não estiver ativado):
+
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+> Se aparecer erro de política de execução, rode antes:
+> ```powershell
+> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+> ```
+
+Instale as dependências (só na primeira vez):
+
+```powershell
+pip install -r src\backend\requirements.txt
+```
+
+---
+
+## Passo 3 — Criar as tabelas e carregar os dados de teste
+
+### 3a. Aplicar as migrações (criar tabelas)
+
+```powershell
+cd src\backend
 alembic upgrade head
+cd ..\..
 ```
 
-Suba o servidor:
+Deve aparecer: `Running upgrade -> 84055d28018b ...` e depois `Running upgrade ... -> 26421a10895a ...`
 
-```bash
-uvicorn main:app --reload
+### 3b. Inserir os dados falsos
+
+Conecte ao banco e rode o seed. Opção 1 — via `psql` (se instalado):
+
+```powershell
+psql -h localhost -U oferta -d oferta_disciplinas -f data\sample\seed.sql
 ```
 
-Abra `http://localhost:8000/docs` — Swagger UI gerado automaticamente
-pelo FastAPI, dá pra testar os endpoints sem escrever código.
+Senha quando pedir: `oferta_dev_local`
 
-## 3. Frontend (React)
+Opção 2 — via Docker (sem precisar do `psql` local):
 
-Ainda não criado (Epic 0, Issue 4). Quando criar:
+```powershell
+docker exec -i oferta-disciplinas-db psql -U oferta -d oferta_disciplinas < data\sample\seed.sql
+```
 
-```bash
-cd src/frontend
-npm create vite@latest . -- --template react
-npm install
+Se rodar corretamente, você verá saídas como `DELETE 0`, `INSERT 0 2`, `INSERT 0 3`, etc.
+
+---
+
+## Passo 4 — Iniciar o backend
+
+```powershell
+cd src\backend
+uvicorn main:app --reload --port 8000
+```
+
+Teste no navegador: http://localhost:8000/health
+
+Deve retornar: `{"status":"ok"}`
+
+Documentação interativa da API (Swagger): http://localhost:8000/docs
+
+---
+
+## Passo 5 — Iniciar o frontend
+
+Em **outro terminal** (sem fechar o backend):
+
+```powershell
+cd src\frontend
 npm run dev
 ```
 
-Sobe em `http://localhost:5173` por padrão — já liberado no CORS do
-backend (`main.py`).
+Abra no navegador: http://localhost:5173
+
+---
+
+## Passo 6 — Fazer login e testar
+
+Na tela de login, use:
+
+| Campo | Valor |
+|-------|-------|
+| E-mail | `coordenador@unipampa.edu.br` |
+| Senha | `admin123` |
+
+### O que testar no sistema
+
+1. **Login** → deve redirecionar para o Dashboard
+2. **Filtro de curso** → selecionar `CC` (Ciência da Computação)
+3. **Filtro de período** → selecionar `2026/1`
+   - Deve aparecer 2 disciplinas: `C-CALC1` e `C-PROG1`
+   - `C-CALC1` terá **1 aluno no Grupo A** (matrícula `2021002`, cursando em 2026/1)
+4. **Clicar em uma disciplina** → abre a tela de Detalhe com Grupos A/B/C
+5. **Botão Exportar CSV** → faz download de um arquivo `.csv`
+
+---
+
+## Parar tudo
+
+```powershell
+# Para o banco (preserva os dados):
+docker compose stop
+
+# Para apagar os dados e começar do zero:
+docker compose down -v
+```
+
+---
+
+## Resolução de problemas comuns
+
+| Problema | Solução |
+|----------|---------|
+| `Connection refused` no backend | Verifique se o Docker está rodando e rode `docker compose up -d` |
+| `alembic: command not found` | Certifique-se que o venv está ativado com `.\venv\Scripts\Activate.ps1` |
+| Erro `detail: E-mail ou senha incorretos` | Rode o `seed.sql` novamente para recriar o usuário |
+| Frontend mostra tela em branco | Abra o console do navegador (F12) e veja o erro; verifique se o backend está rodando |
+| Porta `8000` em uso | Rode o backend em outra porta: `uvicorn main:app --reload --port 8001` — e ajuste `API_BASE` nos `.tsx` |
