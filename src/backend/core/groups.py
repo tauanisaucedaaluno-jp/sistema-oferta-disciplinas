@@ -52,20 +52,31 @@ def _aluno_esta_ativo(db: Session, matricula: str) -> bool:
 def _historico_do_aluno_no_conceito(
     db: Session, matricula: str, curso_codigo: str, conceito_id: str
 ) -> List[Historico]:
-    """Todas as linhas de histórico do aluno cujo código resolve para este conceito."""
+    """Todas as linhas de histórico do aluno cujo código resolve para este conceito ou equivalentes (mesmo nome_normalizado)."""
+    from db.models import ConceitoDisciplina, CodigoDisciplina
+    
+    nome_alvo = db.query(ConceitoDisciplina.nome_normalizado).filter(ConceitoDisciplina.id == conceito_id).scalar()
+    if not nome_alvo:
+        return []
+
     linhas = (
         db.query(Historico)
+        .join(
+            CodigoDisciplina,
+            (Historico.curso_codigo == CodigoDisciplina.curso_codigo) &
+            (Historico.disciplina_codigo == CodigoDisciplina.codigo)
+        )
+        .join(
+            ConceitoDisciplina,
+            CodigoDisciplina.conceito_id == ConceitoDisciplina.id
+        )
         .filter(
             Historico.aluno_matricula == matricula,
-            Historico.curso_codigo == curso_codigo,
+            ConceitoDisciplina.nome_normalizado == nome_alvo
         )
         .all()
     )
-    return [
-        h
-        for h in linhas
-        if resolver_conceito(db, curso_codigo, h.disciplina_codigo) == conceito_id
-    ]
+    return linhas
 
 
 def _periodo_mesmo(p1: str, p2: str) -> bool:
@@ -170,17 +181,15 @@ class AlunoGrupoC:
 
 def probabilidade_aprovacao_nivel1(db: Session, conceito_id: str) -> float:
     """
-    RN09 — Nível 1 (MVP): taxa histórica agregada de aprovação do conceito,
-    somando todos os códigos históricos que resolvem para ele.
-
-    aprovados / (aprovados + reprovados) — situações 'cursando', 'trancado'
-    e 'indefinido' não entram no denominador porque não representam um
-    resultado final ainda (ou, no caso de indefinido, já foi decidido em
-    RN04.1 tratar como não-aprovado só para checagem de pré-requisito, não
-    para esta taxa histórica).
+    RN09 — Nível 1 (MVP): taxa histórica agregada de aprovação do conceito.
+    Agora agregando por nome_normalizado para compartilhar dados com cursos equivalentes (ex: CC e EC/ES).
     """
     from sqlalchemy import func
-    from db.models import CodigoDisciplina
+    from db.models import CodigoDisciplina, ConceitoDisciplina
+
+    nome_alvo = db.query(ConceitoDisciplina.nome_normalizado).filter(ConceitoDisciplina.id == conceito_id).scalar()
+    if not nome_alvo:
+        return 0.0
 
     query = (
         db.query(Historico.situacao, func.count(Historico.id))
@@ -189,7 +198,11 @@ def probabilidade_aprovacao_nivel1(db: Session, conceito_id: str) -> float:
             (Historico.curso_codigo == CodigoDisciplina.curso_codigo) &
             (Historico.disciplina_codigo == CodigoDisciplina.codigo)
         )
-        .filter(CodigoDisciplina.conceito_id == conceito_id)
+        .join(
+            ConceitoDisciplina,
+            CodigoDisciplina.conceito_id == ConceitoDisciplina.id
+        )
+        .filter(ConceitoDisciplina.nome_normalizado == nome_alvo)
         .filter(Historico.situacao.in_(["aprovado", "reprovado"]))
         .group_by(Historico.situacao)
         .all()
@@ -205,7 +218,7 @@ def probabilidade_aprovacao_nivel1(db: Session, conceito_id: str) -> float:
 
     total = aprovados + reprovados
     if total == 0:
-        return 0.0
+        return 0.5  # Fallback seguro para novas disciplinas sem histórico algum
     return aprovados / total
 
 
