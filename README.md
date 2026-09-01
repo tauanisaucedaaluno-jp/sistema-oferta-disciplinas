@@ -36,9 +36,7 @@ A documentação completa do projeto está organizada em dois lugares:
 
 ## Status do projeto
 
-🚧 Em fase de especificação — modelagem de dados e contratos definidos a
-partir dos CSVs reais de currículo e histórico escolar. Desenvolvimento
-ainda não iniciado.
+✅ Em fase de testes e ajustes finais — O desenvolvimento do backend (FastAPI) e frontend (React) já foi concluído. O sistema agora está passando pela revisão final da coordenadora e os últimos detalhes estão sendo alinhados para a implantação.
 
 ## Estrutura do repositório
 

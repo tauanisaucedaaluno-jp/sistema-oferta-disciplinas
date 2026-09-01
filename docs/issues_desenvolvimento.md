@@ -1,6 +1,30 @@
 # Issues de Desenvolvimento: Sistema de Oferta de Disciplinas
 
+> **Status:** As issues dos épicos 0–6 foram **CONCLUÍDAS**. O projeto está em fase de ajustes finais após revisão da coordenadora. O Epic 7 abaixo lista as novas issues abertas dessa revisão.
+
 Com base no `GUIA-DE-IMPLEMENTACAO.md`, aqui estão as issues detalhadas para o desenvolvimento do projeto, divididas por épicos.
+
+---
+
+## Epic 7 — Ajustes pós-revisão da Coordenadora
+
+### #32 Probabilidade de reprovação no Grupo A (RN10) ✅
+**Solicitante:** Coordenadora Natalia — revisão final (2026/2).
+**Descrição:** O Grupo A estava sendo somado à demanda como contagem bruta (assumindo que todos os alunos cursando agora iriam reprovar). A coordenadora apontou que isso superestima a demanda — alunos aprovados não precisam da disciplina no próximo semestre.
+**O que foi feito:**
+- Adicionada a regra de negócio **RN10** em `docs/regras-de-negocio.md`.
+- Criado o dataclass `AlunoGrupoA` (espelho de `AlunoGrupoC`) com o campo `probabilidade_reprovacao`.
+- Atualizada a função `grupo_a()` em `src/backend/core/groups.py` para retornar `List[AlunoGrupoA]` em vez de `List[str]`.
+- Atualizada a fórmula `demanda_estimada()` para somar `probabilidade_reprovacao` por aluno do Grupo A.
+- A probabilidade é calculada como `1 - probabilidade_aprovacao_nivel1()` (taxa histórica da disciplina), reutilizando a mesma função já existente para o Grupo C.
+
+**Pendente:** Atualizar a tela de detalhe no frontend (`Detalhe.tsx`) para exibir a `probabilidade_reprovacao` de cada aluno do Grupo A, assim como o Grupo C já exibe.
+**Arquivos modificados:**
+- [MODIFY] `src/backend/core/groups.py`
+- [MODIFY] `docs/regras-de-negocio.md`
+
+---
+
 
 ## Epic 0 — Ambiente de Desenvolvimento
 
