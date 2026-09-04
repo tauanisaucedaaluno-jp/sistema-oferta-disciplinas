@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import logoImg from "../assets/logo.png";
 
-interface AlunoGrupoC {
+interface AlunoComProbabilidade {
   matricula: string;
   probabilidade: number;
+  probabilidade_reprovacao?: number;
+  probabilidade_aprovacao?: number;
 }
 
 interface DetalheDemanda {
@@ -15,9 +17,9 @@ interface DetalheDemanda {
   periodicidade_oferta: string | null;
   demanda_estimada: number;
   total_alunos: number;
-  grupo_a: string[];
+  grupo_a: (string | AlunoComProbabilidade)[];
   grupo_b: string[];
-  grupo_c: AlunoGrupoC[];
+  grupo_c: (string | AlunoComProbabilidade)[];
 }
 
 interface DetalheProps {
@@ -41,7 +43,7 @@ function getMatricula(item: any): string {
 
 function getProbabilidade(item: any): number {
   if (!item || typeof item !== "object") return 0.5;
-  const p = item.probabilidade ?? item.probabilidade_aprovacao ?? item.prob;
+  const p = item.probabilidade ?? item.probabilidade_reprovacao ?? item.probabilidade_aprovacao ?? item.prob;
   return typeof p === "number" && !isNaN(p) ? p : 0.5;
 }
 
@@ -169,14 +171,14 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
           <div key={activeTab} className="audit-list-card">
             <div className="card-header">
               <h3>
-                {activeTab === "A" && "Grupo A — Alunos Atualmente Matriculados"}
+                {activeTab === "A" && "Grupo A — Alunos Cursando a Disciplina"}
                 {activeTab === "B" && "Grupo B — Alunos Aptos não Matriculados"}
                 {activeTab === "C" && "Grupo C — Alunos em Carga de Pré-requisitos"}
               </h3>
               <p>
-                {activeTab === "A" && "Estudantes cursando a disciplina no período letivo analisado."}
+                {activeTab === "A" && "Estudantes cursando a disciplina no período letivo analisado, ponderados pela probabilidade histórica de reprovação (quem reprovar demandará a matéria novamente)."}
                 {activeTab === "B" && "Estudantes ativos que completaram os pré-requisitos e não cursaram a matéria ainda."}
-                {activeTab === "C" && "Estudantes cursando pré-requisitos no momento, multiplicados pela probabilidade de aprovação."}
+                {activeTab === "C" && "Estudantes cursando pré-requisitos no momento, ponderados pela probabilidade histórica de aprovação."}
               </p>
             </div>
 
@@ -188,11 +190,14 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
                   <ul key="list-students-a" className="student-list">
                     {listA.map((item, idx) => {
                       const mat = getMatricula(item);
+                      const prob = getProbabilidade(item);
                       return (
                         <li key={`student-a-${mat}-${idx}`} className="student-item">
                           <span className="student-icon">👤</span>
                           <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
-                          <span className="student-status active">Matriculado (Peso 1.0)</span>
+                          <span className="student-probability">
+                            Probabilidade de reprovação: <strong>{(prob * 100).toFixed(1)}%</strong>
+                          </span>
                         </li>
                       );
                     })}

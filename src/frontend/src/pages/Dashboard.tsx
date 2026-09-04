@@ -4,6 +4,7 @@ import logoImg from "../assets/logo.png";
 interface DemandaPorCurso {
   curso_codigo: string;
   grupo_a_qtd: number;
+  grupo_a_prob?: number;
   grupo_b_qtd: number;
   grupo_c_qtd: number;
   grupo_c_prob: number;
@@ -284,7 +285,7 @@ export default function Dashboard({
                     {curso !== "TODOS" && <th className="text-center">Semestre</th>}
                     <th className="text-center">A (Cursando)</th>
                     <th className="text-center">B (Aptos)</th>
-                    <th className="text-center">C (Potencial)</th>
+                    <th className="text-center">C (Cursando pré-req)</th>
                     <th className="text-center">Total Alunos</th>
                     <th className="text-right">Demanda Est.</th>
                     {curso === "TODOS" && <th className="text-center">Cursos</th>}

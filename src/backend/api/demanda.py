@@ -33,15 +33,17 @@ def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: s
     ga = grupo_a(db, curso_codigo, conceito_id, periodo_atual, context_cache)
     gb = grupo_b(db, curso_codigo, conceito_id, context_cache)
     gc = grupo_c(db, curso_codigo, conceito_id, periodo_atual, context_cache)
+    prob_a = sum(aluno.probabilidade_reprovacao for aluno in ga)
     prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
-    total_ponderado = len(ga) + len(gb) + prob_c
+    total_ponderado = prob_a + len(gb) + prob_c
     return {
         "curso_codigo": curso_codigo,
         "grupo_a_qtd": len(ga),
+        "grupo_a_prob": round(prob_a, 2),
         "grupo_b_qtd": len(gb),
         "grupo_c_qtd": len(gc),
         "grupo_c_prob": round(prob_c, 2),
-        # RF11: soma ponderada (A + B + Σ prob C) — pode ser decimal
+        # RF11 / RN08: soma ponderada (Σ prob reprovação A + |B| + Σ prob aprovação C)
         "demanda_estimada": round(total_ponderado, 2),
         # Contagem inteira de alunos distintos (A + B + C sem ponderação)
         "total_alunos": len(ga) + len(gb) + len(gc),
@@ -166,7 +168,8 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
     resultado = []
     for nome_normalizado, pares in sorted(grupos_por_nome.items()):
         demanda_por_curso = []
-        total_a = 0
+        total_a_qtd = 0
+        total_a_prob = 0.0
         total_b = 0
         total_c_qtd = 0
         total_c_prob = 0.0
@@ -181,13 +184,14 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
         for vinc, conceito in pares:
             dados = _calcular_demanda_por_vinculo(db, vinc.curso_codigo, vinc.conceito_id, periodo_atual, context_cache)
             demanda_por_curso.append(dados)
-            total_a += dados["grupo_a_qtd"]
+            total_a_qtd += dados["grupo_a_qtd"]
+            total_a_prob += dados["grupo_a_prob"]
             total_b += dados["grupo_b_qtd"]
             total_c_qtd += dados["grupo_c_qtd"]
             total_c_prob += dados["grupo_c_prob"]
             total_alunos += dados["total_alunos"]
 
-        demanda_total = round(total_a + total_b + total_c_prob, 2)
+        demanda_total = round(total_a_prob + total_b + total_c_prob, 2)
 
         resultado.append({
             # Usa conceito_id do primeiro curso como referência; demanda_por_curso tem todos
@@ -195,7 +199,7 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
             "disciplina_nome": nome_normalizado,
             "periodo_sugerido": periodo_sugerido,
             "periodicidade_oferta": periodicidade_oferta,
-            "grupo_a_qtd": total_a,
+            "grupo_a_qtd": total_a_qtd,
             "grupo_b_qtd": total_b,
             "grupo_c_qtd": total_c_qtd,
             "demanda_estimada": demanda_total,
@@ -248,7 +252,9 @@ def obter_detalhe_demanda(
     ga = grupo_a(db, curso_codigo, conceito_id_efetivo, periodo_atual)
     gb = grupo_b(db, curso_codigo, conceito_id_efetivo)
     gc = grupo_c(db, curso_codigo, conceito_id_efetivo, periodo_atual)
-    total = len(ga) + len(gb) + sum(aluno.probabilidade_aprovacao for aluno in gc)
+    prob_a = sum(aluno.probabilidade_reprovacao for aluno in ga)
+    prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
+    total = prob_a + len(gb) + prob_c
 
     return {
         "conceito_id": conceito_id_efetivo,
@@ -259,10 +265,13 @@ def obter_detalhe_demanda(
         "periodicidade_oferta": vinculo.periodicidade_oferta if vinculo else None,
         "demanda_estimada": round(total, 2),
         "total_alunos": len(ga) + len(gb) + len(gc),
-        "grupo_a": ga,
+        "grupo_a": [
+            {"matricula": aluno.matricula, "probabilidade": aluno.probabilidade_reprovacao, "probabilidade_reprovacao": aluno.probabilidade_reprovacao}
+            for aluno in ga
+        ],
         "grupo_b": gb,
         "grupo_c": [
-            {"matricula": aluno.matricula, "probabilidade": aluno.probabilidade_aprovacao}
+            {"matricula": aluno.matricula, "probabilidade": aluno.probabilidade_aprovacao, "probabilidade_aprovacao": aluno.probabilidade_aprovacao}
             for aluno in gc
         ],
     }

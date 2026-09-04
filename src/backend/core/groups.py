@@ -192,14 +192,80 @@ def _obter_inaptos_disciplina(db: Session, curso_codigo: str, nome_alvo: str, co
     return inaptos
 
 
-def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str, context_cache: dict = None) -> List[str]:
-    """RF07 — matrículas dos alunos cursando o conceito agora."""
+_CACHE_PROB = {}
+
+def probabilidade_aprovacao_nivel1(db: Session, conceito_id: str, context_cache: dict = None) -> float:
+    """
+    RN09 — Nível 1 (MVP): taxa histórica agregada de aprovação do conceito.
+    Agrega por nome_normalizado com cache em memória.
+    """
+    nome_alvo = _obter_nome_normalizado(db, conceito_id, context_cache)
+    if not nome_alvo:
+        return 0.5
+
+    if context_cache is not None:
+        if "prob_aprov" not in context_cache:
+            context_cache["prob_aprov"] = {}
+        if nome_alvo in context_cache["prob_aprov"]:
+            return context_cache["prob_aprov"][nome_alvo]
+    elif nome_alvo in _CACHE_PROB:
+        return _CACHE_PROB[nome_alvo]
+
+    query = (
+        db.query(Historico.situacao, func.count(Historico.id))
+        .join(
+            CodigoDisciplina,
+            (Historico.curso_codigo == CodigoDisciplina.curso_codigo) &
+            (Historico.disciplina_codigo == CodigoDisciplina.codigo)
+        )
+        .join(
+            ConceitoDisciplina,
+            CodigoDisciplina.conceito_id == ConceitoDisciplina.id
+        )
+        .filter(ConceitoDisciplina.nome_normalizado == nome_alvo)
+        .filter(Historico.situacao.in_(["aprovado", "reprovado"]))
+        .group_by(Historico.situacao)
+        .all()
+    )
+
+    aprovados = 0
+    reprovados = 0
+    for situacao, count in query:
+        if situacao == "aprovado":
+            aprovados += count
+        elif situacao == "reprovado":
+            reprovados += count
+
+    total = aprovados + reprovados
+    taxa = round(aprovados / total, 4) if total > 0 else 0.5
+    if context_cache is not None:
+        context_cache["prob_aprov"][nome_alvo] = taxa
+    else:
+        _CACHE_PROB[nome_alvo] = taxa
+    return taxa
+
+
+def probabilidade_reprovacao_nivel1(db: Session, conceito_id: str, context_cache: dict = None) -> float:
+    """RN10 — Nível 1 (MVP): taxa histórica agregada de reprovação do conceito (1 - taxa_aprovacao)."""
+    taxa_aprov = probabilidade_aprovacao_nivel1(db, conceito_id, context_cache)
+    return round(1.0 - taxa_aprov, 4)
+
+
+@dataclass
+class AlunoGrupoA:
+    matricula: str
+    probabilidade_reprovacao: float
+
+
+def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str, context_cache: dict = None) -> List[AlunoGrupoA]:
+    """RF07 / RN10 — alunos cursando o conceito agora com probabilidade de reprovação estimada."""
     nome_alvo = _obter_nome_normalizado(db, conceito_id, context_cache)
     if not nome_alvo:
         return []
 
     formatos = _formatos_periodo(periodo_atual)
     alunos_ativos = _obter_alunos_ativos_curso(db, curso_codigo, context_cache)
+    prob_rep = probabilidade_reprovacao_nivel1(db, conceito_id, context_cache)
 
     key = (curso_codigo, nome_alvo, tuple(formatos))
     if context_cache is not None:
@@ -207,7 +273,7 @@ def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
             context_cache["cursando_alvo"] = {}
         if key in context_cache["cursando_alvo"]:
             query_res = context_cache["cursando_alvo"][key]
-            return sorted([mat for mat in query_res if mat in alunos_ativos])
+            return [AlunoGrupoA(matricula=mat, probabilidade_reprovacao=prob_rep) for mat in sorted(query_res) if mat in alunos_ativos]
 
     cods = _obter_codigos_disciplina(db, curso_codigo, nome_alvo, context_cache)
     if not cods:
@@ -228,7 +294,7 @@ def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
 
     if context_cache is not None:
         context_cache["cursando_alvo"][key] = res_mats
-    return sorted([m for m in res_mats if m in alunos_ativos])
+    return [AlunoGrupoA(matricula=m, probabilidade_reprovacao=prob_rep) for m in sorted(res_mats) if m in alunos_ativos]
 
 
 def grupo_b(db: Session, curso_codigo: str, conceito_id: str, context_cache: dict = None) -> List[str]:
@@ -311,51 +377,6 @@ def grupo_b(db: Session, curso_codigo: str, conceito_id: str, context_cache: dic
 class AlunoGrupoC:
     matricula: str
     probabilidade_aprovacao: float
-
-
-_CACHE_PROB = {}
-
-def probabilidade_aprovacao_nivel1(db: Session, conceito_id: str, context_cache: dict = None) -> float:
-    """
-    RN09 — Nível 1 (MVP): taxa histórica agregada de aprovação do conceito.
-    Agrega por nome_normalizado com cache em memória.
-    """
-    nome_alvo = _obter_nome_normalizado(db, conceito_id, context_cache)
-    if not nome_alvo:
-        return 0.5
-
-    if nome_alvo in _CACHE_PROB:
-        return _CACHE_PROB[nome_alvo]
-
-    query = (
-        db.query(Historico.situacao, func.count(Historico.id))
-        .join(
-            CodigoDisciplina,
-            (Historico.curso_codigo == CodigoDisciplina.curso_codigo) &
-            (Historico.disciplina_codigo == CodigoDisciplina.codigo)
-        )
-        .join(
-            ConceitoDisciplina,
-            CodigoDisciplina.conceito_id == ConceitoDisciplina.id
-        )
-        .filter(ConceitoDisciplina.nome_normalizado == nome_alvo)
-        .filter(Historico.situacao.in_(["aprovado", "reprovado"]))
-        .group_by(Historico.situacao)
-        .all()
-    )
-
-    aprovados = 0
-    reprovados = 0
-    for situacao, count in query:
-        if situacao == "aprovado":
-            aprovados += count
-        elif situacao == "reprovado":
-            reprovados += count
-
-    total = aprovados + reprovados
-    taxa = round(aprovados / total, 4) if total > 0 else 0.5
-    _CACHE_PROB[nome_alvo] = taxa
-    return taxa
 
 
 def _obter_cursando_disciplina(db: Session, curso_codigo: str, pre_nome: str, formatos: List[str], context_cache: dict = None) -> Set[str]:
@@ -478,8 +499,10 @@ def grupo_c(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
 
 
 def demanda_estimada(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str, context_cache: dict = None) -> float:
-    """RN08 — |Grupo A| + |Grupo B| + soma das probabilidades do Grupo C."""
+    """RN08 — soma das probabilidades de reprovação do Grupo A + |Grupo B| + soma das probabilidades do Grupo C."""
     a = grupo_a(db, curso_codigo, conceito_id, periodo_atual, context_cache)
     b = grupo_b(db, curso_codigo, conceito_id, context_cache)
     c = grupo_c(db, curso_codigo, conceito_id, periodo_atual, context_cache)
-    return len(a) + len(b) + sum(aluno.probabilidade_aprovacao for aluno in c)
+    prob_a = sum(aluno.probabilidade_reprovacao for aluno in a)
+    prob_c = sum(aluno.probabilidade_aprovacao for aluno in c)
+    return prob_a + len(b) + prob_c

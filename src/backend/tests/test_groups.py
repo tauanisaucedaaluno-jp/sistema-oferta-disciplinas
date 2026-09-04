@@ -11,12 +11,13 @@ if BACKEND_DIR not in sys.path:
 
 from db.database import Base
 from db.models import Curso, ConceitoDisciplina, CodigoDisciplina, VinculoCurricular, PreRequisito, Aluno, Historico
-from core.groups import grupo_a, grupo_b, grupo_c, demanda_estimada
+from core.groups import grupo_a, grupo_b, grupo_c, demanda_estimada, _CACHE_PROB
 
 
 @pytest.fixture(name="db")
 def fixture_db():
     """Cria banco de dados SQLite em memória para testes isolados."""
+    _CACHE_PROB.clear()
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     TestingSessionLocal = sessionmaker(bind=engine)
@@ -32,6 +33,7 @@ def fixture_db():
     finally:
         session.close()
         Base.metadata.drop_all(engine)
+        _CACHE_PROB.clear()
 
 
 def test_grupo_a(db):
@@ -59,9 +61,12 @@ def test_grupo_a(db):
     resultado = grupo_a(db, "CC", "CC-CALC1", "2026/1")
     
     # Asserções
-    assert "1001" in resultado
-    assert "1002" not in resultado
+    mats = [a.matricula for a in resultado]
+    assert "1001" in mats
+    assert "1002" not in mats
     assert len(resultado) == 1
+    # hist2 tem 1 aprovado -> taxa_aprov = 1.0 -> prob_reprov = 0.0
+    assert resultado[0].probabilidade_reprovacao == 0.0
 
 
 def test_grupo_b_requisito_simples(db):
@@ -261,18 +266,23 @@ def test_demanda_estimada(db):
     # Histórico de Física I para calcular taxa (1 aprovado, 1 reprovado -> taxa = 0.5)
     h_ant_1 = Historico(aluno_matricula="9001", curso_codigo="CC", disciplina_codigo="FIS001", periodo_letivo="2024/1", situacao="aprovado")
     h_ant_2 = Historico(aluno_matricula="9002", curso_codigo="CC", disciplina_codigo="FIS001", periodo_letivo="2024/1", situacao="reprovado")
-    db.add_all([h_ant_1, h_ant_2])
+    # Histórico de Física II para calcular taxa (1 aprovado, 3 reprovados -> taxa_aprov = 0.25 -> prob_reprov = 0.75)
+    h_ant_3 = Historico(aluno_matricula="9003", curso_codigo="CC", disciplina_codigo="FIS002", periodo_letivo="2024/1", situacao="aprovado")
+    h_ant_4 = Historico(aluno_matricula="9004", curso_codigo="CC", disciplina_codigo="FIS002", periodo_letivo="2024/1", situacao="reprovado")
+    h_ant_5 = Historico(aluno_matricula="9005", curso_codigo="CC", disciplina_codigo="FIS002", periodo_letivo="2024/1", situacao="reprovado")
+    h_ant_6 = Historico(aluno_matricula="9006", curso_codigo="CC", disciplina_codigo="FIS002", periodo_letivo="2024/1", situacao="reprovado")
+    db.add_all([h_ant_1, h_ant_2, h_ant_3, h_ant_4, h_ant_5, h_ant_6])
     db.commit()
     
-    # Aluno 1: Cursando Física II agora em 2026/1 (Grupo A)
+    # Aluno 1: Cursando Física II agora em 2026/1 (Grupo A com prob_reprov = 0.75)
     aluno1 = Aluno(matricula="1001", curso_codigo="CC")
     h1 = Historico(aluno_matricula="1001", curso_codigo="CC", disciplina_codigo="FIS002", periodo_letivo="2026/1", situacao="cursando")
     
-    # Aluno 2: Passou em Física I (Grupo B)
+    # Aluno 2: Passou em Física I (Grupo B com peso 1.0)
     aluno2 = Aluno(matricula="1002", curso_codigo="CC")
     h2 = Historico(aluno_matricula="1002", curso_codigo="CC", disciplina_codigo="FIS001", periodo_letivo="2025/1", situacao="aprovado")
     
-    # Aluno 3: Cursando Física I agora em 2026/1 (Grupo C com prob = 0.5)
+    # Aluno 3: Cursando Física I agora em 2026/1 (Grupo C com prob_aprov = 0.5)
     aluno3 = Aluno(matricula="1003", curso_codigo="CC")
     h3 = Historico(aluno_matricula="1003", curso_codigo="CC", disciplina_codigo="FIS001", periodo_letivo="2026/1", situacao="cursando")
     
@@ -283,8 +293,8 @@ def test_demanda_estimada(db):
     # Execução
     demanda = demanda_estimada(db, "CC", "CC-FIS2", "2026/1")
     
-    # Grupo A = 1 (aluno1)
-    # Grupo B = 1 (aluno2)
-    # Grupo C = 0.6667 (aluno3, prob 2/3)
-    # Total = 1 + 1 + 0.6667 = 2.6667
-    assert round(demanda, 4) == 2.6667
+    # Grupo A = 0.75 (aluno1 cursando FIS002, prob_reprov 1 - 1/4 = 0.75)
+    # Grupo B = 1.0 (aluno2 apto a cursar FIS002)
+    # Grupo C = 0.6667 (aluno3 cursando FIS001, prob_aprov 2/3 = 0.6667 considerando h_ant_1, h_ant_2 e h2)
+    # Total = 0.75 + 1.0 + 0.6667 = 2.4167
+    assert round(demanda, 4) == 2.4167
