@@ -6,14 +6,16 @@ import "./App.css";
 
 type Page = "login" | "dashboard" | "detalhe";
 
+import ErrorBoundary from "./components/ErrorBoundary";
+
 function App() {
   const [token, setToken] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>("login");
   const [selectedConceitoId, setSelectedConceitoId] = useState<string | null>(null);
-  const [curso, setCurso] = useState<string>("TODOS");
+  const [curso, setCurso] = useState<string>("ALES");
   const [periodo, setPeriodo] = useState<string>("2026/1");
   const [modo, setModo] = useState<string>("regular");
-  const [cursoCodigo, setCursoCodigo] = useState<string>("CC");
+  const [cursoCodigo, setCursoCodigo] = useState<string>("ALES");
 
   useEffect(() => {
     // Tenta carregar a sessão do localStorage
@@ -56,7 +58,7 @@ function App() {
   };
 
   return (
-    <>
+    <ErrorBoundary>
       {currentPage === "login" && (
         <Login onLoginSuccess={handleLoginSuccess} />
       )}
@@ -85,7 +87,7 @@ function App() {
           onBack={() => setCurrentPage("dashboard")}
         />
       )}
-    </>
+    </ErrorBoundary>
   );
 }
 

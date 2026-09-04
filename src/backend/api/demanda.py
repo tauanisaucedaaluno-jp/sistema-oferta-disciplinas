@@ -19,16 +19,20 @@ def listar_cursos(
     db: Session = Depends(get_db),
     usuario_atual: Usuario = Depends(obter_usuario_atual),
 ):
-    """Retorna a lista de todos os cursos cadastrados (código + nome)."""
-    cursos = db.query(Curso).order_by(Curso.nome).all()
+    """Retorna a lista de todos os cursos que possuem alunos cadastrados."""
+    from db.models import Aluno
+    cursos_com_alunos = set(r[0] for r in db.query(Aluno.curso_codigo).distinct().all())
+    cursos = db.query(Curso).filter(Curso.codigo.in_(cursos_com_alunos)).order_by(Curso.nome).all()
+    if not cursos:
+        cursos = db.query(Curso).order_by(Curso.nome).all()
     return [{"codigo": c.codigo, "nome": c.nome} for c in cursos]
 
 
-def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str) -> dict:
+def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str, context_cache: dict = None) -> dict:
     """Calcula A, B, C e demanda estimada para um par (curso, conceito)."""
-    ga = grupo_a(db, curso_codigo, conceito_id, periodo_atual)
-    gb = grupo_b(db, curso_codigo, conceito_id)
-    gc = grupo_c(db, curso_codigo, conceito_id, periodo_atual)
+    ga = grupo_a(db, curso_codigo, conceito_id, periodo_atual, context_cache)
+    gb = grupo_b(db, curso_codigo, conceito_id, context_cache)
+    gc = grupo_c(db, curso_codigo, conceito_id, periodo_atual, context_cache)
     prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
     total_ponderado = len(ga) + len(gb) + prob_c
     return {
@@ -82,7 +86,8 @@ def obter_demandas(
     agrupando por nome_normalizado (RF12). Cada item do resultado inclui 'demanda_por_curso'
     com a quebra individual por curso.
     """
-    registrar_acesso(db, "consulta_demanda", f"Curso: {curso_codigo}, Periodo: {periodo_atual}, Modo: {modo}", usuario_atual.id)
+    usr_id = usuario_atual.id if usuario_atual else None
+    registrar_acesso(db, "consulta_demanda", f"Curso: {curso_codigo}, Periodo: {periodo_atual}, Modo: {modo}", usr_id)
 
     if curso_codigo == "TODOS":
         return _obter_demandas_todos_cursos(db, periodo_atual, modo)
@@ -103,13 +108,14 @@ def obter_demandas(
 
     vinculos = _filtrar_vinculos_por_modo(list(vinculos_query), modo, periodo_atual)
 
+    context_cache = {}
     resultado = []
     for vinc in vinculos:
         conceito = db.query(ConceitoDisciplina).filter(ConceitoDisciplina.id == vinc.conceito_id).first()
         if not conceito:
             continue
 
-        dados_curso = _calcular_demanda_por_vinculo(db, curso_codigo, vinc.conceito_id, periodo_atual)
+        dados_curso = _calcular_demanda_por_vinculo(db, curso_codigo, vinc.conceito_id, periodo_atual, context_cache)
 
         resultado.append({
             "conceito_id": vinc.conceito_id,
@@ -133,10 +139,14 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
     RF12 — Consolida demanda de todos os cursos, agrupando disciplinas
     pelo nome_normalizado (mesma disciplina em cursos diferentes).
     """
-    # Busca todos os vínculos de todos os cursos
+    from db.models import Aluno
+    cursos_com_alunos = set(r[0] for r in db.query(Aluno.curso_codigo).distinct().all())
+
+    # Busca vínculos apenas dos cursos que possuem alunos matriculados
     todos_vinculos = (
         db.query(VinculoCurricular, ConceitoDisciplina)
         .join(ConceitoDisciplina, VinculoCurricular.conceito_id == ConceitoDisciplina.id)
+        .filter(VinculoCurricular.curso_codigo.in_(cursos_com_alunos))
         .all()
     )
 
@@ -152,6 +162,7 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
     for vinc, conceito in todos_vinculos:
         grupos_por_nome[conceito.nome_normalizado].append((vinc, conceito))
 
+    context_cache = {}
     resultado = []
     for nome_normalizado, pares in sorted(grupos_por_nome.items()):
         demanda_por_curso = []
@@ -168,7 +179,7 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
         periodicidade_oferta = vinc_ref.periodicidade_oferta if len(pares) == 1 else "ambos"
 
         for vinc, conceito in pares:
-            dados = _calcular_demanda_por_vinculo(db, vinc.curso_codigo, vinc.conceito_id, periodo_atual)
+            dados = _calcular_demanda_por_vinculo(db, vinc.curso_codigo, vinc.conceito_id, periodo_atual, context_cache)
             demanda_por_curso.append(dados)
             total_a += dados["grupo_a_qtd"]
             total_b += dados["grupo_b_qtd"]
@@ -205,7 +216,8 @@ def obter_detalhe_demanda(
     usuario_atual: Usuario = Depends(obter_usuario_atual),
 ):
     """Retorna os detalhes de alunos, probabilidades, curso e semestre de uma disciplina específica."""
-    registrar_acesso(db, "consulta_detalhe_demanda", f"Curso: {curso_codigo}, Conceito: {conceito_id}, Periodo: {periodo_atual}", usuario_atual.id)
+    usr_id = usuario_atual.id if usuario_atual else None
+    registrar_acesso(db, "consulta_detalhe_demanda", f"Curso: {curso_codigo}, Conceito: {conceito_id}, Periodo: {periodo_atual}", usr_id)
 
     # 1. Busca o conceito de referência
     conceito = db.query(ConceitoDisciplina).filter(
@@ -265,7 +277,8 @@ def exportar_demandas_csv(
     usuario_atual: Usuario = Depends(obter_usuario_atual),
 ):
     """Gera um arquivo CSV formatado com a estimativa de demanda do curso no período."""
-    registrar_acesso(db, "exportacao_csv", f"Curso: {curso_codigo}, Periodo: {periodo_atual}, Modo: {modo}", usuario_atual.id)
+    usr_id = usuario_atual.id if usuario_atual else None
+    registrar_acesso(db, "exportacao_csv", f"Curso: {curso_codigo}, Periodo: {periodo_atual}, Modo: {modo}", usr_id)
 
     # Reutiliza a lógica de obter_demandas para garantir consistência
     if curso_codigo == "TODOS":

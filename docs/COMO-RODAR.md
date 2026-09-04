@@ -1,6 +1,6 @@
-# Como rodar o sistema — OfertaPampa (dados de teste)
+# Como rodar o sistema — OfertaPampa
 
-Guia atualizado em: 2026-08-27
+Guia atualizado em: 2026-09-04
 
 ---
 
@@ -19,23 +19,21 @@ Guia atualizado em: 2026-08-27
 docker compose up -d
 ```
 
-Isso sobe o Postgres na porta `5432` em background. Para verificar:
+Isso sobe o Postgres na porta `5432` em background. Para verificar se está rodando:
 
 ```powershell
 docker compose ps
 ```
 
-A coluna `Status` deve mostrar `running`.
+A coluna `Status` deve mostrar `running` (ou `Up ...`).
+> **Nota:** O banco utiliza um volume permanente (`oferta_disciplinas_dbdata`). Todos os dados reais importados ficam preservados automaticamente entre reinicializações.
 
 ---
 
 ## Passo 2 — Configurar o backend
 
-Já existe um arquivo `.env` pronto em `src/backend/`. Se não existir, copie:
-
-```powershell
-Copy-Item src\backend\.env.example src\backend\.env
-```
+Já existe um arquivo `.env` pronto em `src/backend/` e na raiz, apontando para o PostgreSQL:
+`DATABASE_URL=postgresql+psycopg2://oferta:oferta_dev_local@localhost:5432/oferta_disciplinas`
 
 Ative o ambiente virtual (se ainda não estiver ativado):
 
@@ -43,12 +41,12 @@ Ative o ambiente virtual (se ainda não estiver ativado):
 .\venv\Scripts\Activate.ps1
 ```
 
-> Se aparecer erro de política de execução, rode antes:
+> Se aparecer erro de política de execução no PowerShell, execute antes:
 > ```powershell
 > Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 > ```
 
-Instale as dependências (só na primeira vez):
+Instale as dependências (necessário apenas na primeira configuração):
 
 ```powershell
 pip install -r src\backend\requirements.txt
@@ -56,9 +54,11 @@ pip install -r src\backend\requirements.txt
 
 ---
 
-## Passo 3 — Criar as tabelas e carregar os dados de teste
+## Passo 3 — Estrutura das Tabelas e Carga de Dados
 
-### 3a. Aplicar as migrações (criar tabelas)
+### 3a. Aplicar as migrações (criar ou atualizar tabelas)
+
+Caso o banco seja iniciado do zero, aplique as migrações:
 
 ```powershell
 cd src\backend
@@ -66,46 +66,46 @@ alembic upgrade head
 cd ..\..
 ```
 
-Deve aparecer: `Running upgrade -> 84055d28018b ...` e depois `Running upgrade ... -> 26421a10895a ...`
+### 3b. Carga de Dados (ETL)
 
-### 3b. Inserir os dados falsos
+O banco de dados do projeto já está populado com os **dados reais** dos 6 cursos de Engenharia (Agrícola, Civil, Elétrica, Mecânica, Software e Telecomunicações).
 
-Conecte ao banco e rode o seed. Opção 1 — via `psql` (se instalado):
+> ⚠️ **IMPORTANTE: NÃO execute o `seed.sql` nem o `seed_db.py` no dia a dia!**  
+> Esses arquivos continham dados fictícios para testes iniciais. Executá-los inseriria dados falsos que se misturariam aos dados reais.
 
+#### Como atualizar ou recarregar os dados reais:
+Sempre que você receber novas matrizes curriculares ou históricos atualizados:
+1. Coloque a matriz em `data/raw/` e os históricos na pasta `data/raw/historicos/`.
+2. Execute o script de ETL:
+   ```powershell
+   python scripts/run_etl.py
+   ```
+   *O script limpa os dados acadêmicos anteriores, recarrega a base real do zero e garante que o usuário coordenador continue ativo.*
+
+*(Opcional) Caso queira propositalmente rodar apenas os dados falsos para testes isolados:*
 ```powershell
-psql -h localhost -U oferta -d oferta_disciplinas -f data\sample\seed.sql
+python scripts/run_etl.py --sample
 ```
-
-Senha quando pedir: `oferta_dev_local`
-
-Opção 2 — via Docker (sem precisar do `psql` local):
-
-```powershell
-docker exec -i oferta-disciplinas-db psql -U oferta -d oferta_disciplinas < data\sample\seed.sql
-```
-
-Se rodar corretamente, você verá saídas como `DELETE 0`, `INSERT 0 2`, `INSERT 0 3`, etc.
 
 ---
 
-## Passo 4 — Iniciar o backend
+## Passo 4 — Iniciar o backend (FastAPI)
 
 ```powershell
 cd src\backend
 uvicorn main:app --reload --port 8000
 ```
 
-Teste no navegador: http://localhost:8000/health
-
+Teste no navegador: http://localhost:8000/health  
 Deve retornar: `{"status":"ok"}`
 
 Documentação interativa da API (Swagger): http://localhost:8000/docs
 
 ---
 
-## Passo 5 — Iniciar o frontend
+## Passo 5 — Iniciar o frontend (React)
 
-Em **outro terminal** (sem fechar o backend):
+Em **outro terminal** (mantendo o backend aberto):
 
 ```powershell
 cd src\frontend
@@ -116,36 +116,43 @@ Abra no navegador: http://localhost:5173
 
 ---
 
-## Passo 6 — Fazer login e testar
+## Passo 6 — Fazer login e usar o sistema
 
-Na tela de login, use:
+Na tela de login, utilize o usuário padrão de coordenação:
 
 | Campo | Valor |
 |-------|-------|
 | E-mail | `coordenador@unipampa.edu.br` |
 | Senha | `admin123` |
 
-### O que testar no sistema
+### O que testar no sistema com dados reais
 
-1. **Login** → deve redirecionar para o Dashboard
-2. **Filtro de curso** → selecionar `CC` (Ciência da Computação)
-3. **Filtro de período** → selecionar `2026/1`
-   - Deve aparecer 2 disciplinas: `C-CALC1` e `C-PROG1`
-   - `C-CALC1` terá **1 aluno no Grupo A** (matrícula `2021002`, cursando em 2026/1)
-4. **Clicar em uma disciplina** → abre a tela de Detalhe com Grupos A/B/C
-5. **Botão Exportar CSV** → faz download de um arquivo `.csv`
+1. **Login** → redireciona diretamente para o Dashboard.
+2. **Filtro de curso** → selecione qualquer um dos cursos reais carregados:
+   - `ALES` — Engenharia de Software
+   - `ALEC` — Engenharia Civil
+   - `ALEE` — Engenharia Elétrica
+   - `ALEM` — Engenharia Mecânica
+   - `ALEA` — Engenharia Agrícola
+   - `ALET` — Engenharia de Telecomunicações
+3. **Filtro de período** → selecione o período letivo desejado (ex.: `2024/1`, `2024/2`, `2025/1`, etc.).
+4. **Detalhe de Demanda** → clique em qualquer disciplina para ver a estimativa de alunos nos **Grupos A, B e C**.
+5. **Exportar CSV** → baixa a listagem formatada para a tomada de decisão da coordenação.
 
 ---
 
-## Parar tudo
+## Parar o sistema
 
 ```powershell
-# Para o banco (preserva os dados):
+# Para o container do banco sem perder nenhum dado:
 docker compose stop
 
-# Para apagar os dados e começar do zero:
-docker compose down -v
+# Para religar quando for trabalhar novamente:
+docker compose up -d
 ```
+
+> 🛑 **Cuidado com a flag `-v`:**  
+> O comando `docker compose down -v` apaga os volumes do Docker (apagando os dados reais do banco). Se precisar apenas parar, use sempre `docker compose stop` ou `docker compose down` (sem `-v`).
 
 ---
 
@@ -153,8 +160,9 @@ docker compose down -v
 
 | Problema | Solução |
 |----------|---------|
-| `Connection refused` no backend | Verifique se o Docker está rodando e rode `docker compose up -d` |
-| `alembic: command not found` | Certifique-se que o venv está ativado com `.\venv\Scripts\Activate.ps1` |
-| Erro `detail: E-mail ou senha incorretos` | Rode o `seed.sql` novamente para recriar o usuário |
-| Frontend mostra tela em branco | Abra o console do navegador (F12) e veja o erro; verifique se o backend está rodando |
-| Porta `8000` em uso | Rode o backend em outra porta: `uvicorn main:app --reload --port 8001` — e ajuste `API_BASE` nos `.tsx` |
+| `Connection refused` no backend | Verifique se o Docker está aberto e rode `docker compose up -d` |
+| `alembic: command not found` | Certifique-se de que o venv está ativo com `.\venv\Scripts\Activate.ps1` |
+| Erro `detail: E-mail ou senha incorretos` | Rode `python scripts/run_etl.py` para garantir a criação do usuário coordenador |
+| Frontend mostra tela em branco | Abra o console do navegador (F12) para ver o log; certifique-se de que o backend está rodando na porta 8000 |
+| Porta `8000` em uso | Inicie o backend em outra porta: `uvicorn main:app --reload --port 8001` (e ajuste a porta no frontend caso necessário) |
+| Relatório de inconsistências dos CSVs | Verifique o arquivo gerado em `data/raw/relatorio_excecoes.txt` para checar pré-requisitos não encontrados na matriz |

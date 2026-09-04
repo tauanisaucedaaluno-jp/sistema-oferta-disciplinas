@@ -26,33 +26,34 @@ def obter_tipo_semestre(periodo_str: str) -> str:
 
 
 def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
-    def _match(col: str) -> str:
-        col_norm = col.lower().strip()
-        import unicodedata
-        col_norm = unicodedata.normalize('NFKD', col_norm).encode('ASCII', 'ignore').decode('ASCII')
-        if 'mat' in col_norm:
-            if 'situ' in col_norm:
-                return 'situacao_da_matricula'
-            return 'matricula'
-        if 'disciplina' in col_norm or 'ativ' in col_norm:
-            if 'situ' in col_norm:
-                return 'situacao_na_disciplina'
-            if 'nome' in col_norm:
-                return 'nome_ativ_curric'
-            if 'cod' in col_norm:
-                return 'cod_ativ_curric'
-        if 'curso' in col_norm:
-            return 'cod_curso'
-        if 'ppc' in col_norm or 'vers' in col_norm:
-            return 'versao_ppc'
-        if 'ano' in col_norm:
-            return 'ano'
-        if 'periodo' in col_norm or 'perio' in col_norm:
-            return 'periodo'
-        return col
-    df = df.copy()
-    df.columns = [_match(col) for col in df.columns]
-    return df
+    col_map = {}
+    import unicodedata
+    for col in df.columns:
+        c = unicodedata.normalize('NFKD', str(col).lower().strip()).encode('ASCII', 'ignore').decode('ASCII')
+        c = re.sub(r'[^a-z0-9_]', '_', c).strip('_')
+
+        if c.startswith('mat') and 'situ' not in c:
+            col_map[col] = 'matricula'
+        elif c == 'cod_curso':
+            col_map[col] = 'cod_curso'
+        elif c == 'curso':
+            col_map[col] = 'curso'
+        elif 'ppc' in c or (c.startswith('vers') and 'ppc' in c):
+            col_map[col] = 'versao_ppc'
+        elif c == 'ano':
+            col_map[col] = 'ano'
+        elif c in ('periodo', 'perio'):
+            col_map[col] = 'periodo'
+        elif 'situ' in c and ('disc' in c or 'ativ' in c):
+            col_map[col] = 'situacao_na_disciplina'
+        elif 'situ' in c and 'mat' in c:
+            col_map[col] = 'situacao_da_matricula'
+        elif c in ('cod_ativ_curric', 'cod_disciplina') or (c.startswith('cod') and ('ativ' in c or 'disc' in c)):
+            col_map[col] = 'cod_ativ_curric'
+        elif c in ('nome_ativ_curric', 'nome_disciplina') or (c.startswith('nome') and ('ativ' in c or 'disc' in c)):
+            col_map[col] = 'nome_ativ_curric'
+
+    return df.rename(columns=col_map)
 
 
 def ler_historico(caminho: str) -> pd.DataFrame:
@@ -62,9 +63,9 @@ def ler_historico(caminho: str) -> pd.DataFrame:
         df = pd.read_excel(caminho)
     else:
         try:
-            df = pd.read_csv(caminho, sep=';', encoding='utf-8')
+            df = pd.read_csv(caminho, sep=';', encoding='utf-8', dtype=str)
         except (UnicodeDecodeError, ValueError):
-            df = pd.read_csv(caminho, sep=';', encoding='latin-1')
+            df = pd.read_csv(caminho, sep=';', encoding='latin-1', dtype=str)
     return normalizar_colunas(df)
 
 
@@ -72,39 +73,41 @@ def normalizar_situacao(df: pd.DataFrame) -> pd.DataFrame:
     """RF03, RN04: Mapeia os estados originais da disciplina para os 5 estados canônicos."""
     if df.empty:
         return df
-        
+
     # Mapeamento oficial (RN04)
     mapping = {
         "aprovado com nota": "aprovado",
         "aprovado sem nota": "aprovado",
         "aproveitamento": "aprovado",
         "aproveitamento de creditos": "aprovado",
+        "dispensado": "aprovado",
         "dispensado com nota": "aprovado",
         "dispensado sem nota": "aprovado",
-        
+
         "reprovado com nota": "reprovado",
         "reprovado por frequencia": "reprovado",
         "reprovado sem nota": "reprovado",
-        
+
         "matricula": "cursando",
-        
+
         "trancamento parcial": "trancado",
         "trancamento total": "trancado",
         "trancamento por estado de calamidade publica": "trancado",
-        
+
         "sod": "indefinido",
         "disciplina nao concluida": "indefinido",
         "incompleto": "indefinido",
-        "mobilidade academica": "indefinido"
+        "mobilidade academica": "indefinido",
+        "situacao da atividade no curriculo": "indefinido"
     }
 
+    import unicodedata
     def _normalize(val):
         if pd.isna(val):
             return "indefinido"
         val_str = str(val).lower().strip()
-        # Remove acentos
-        import unicodedata
         val_str = unicodedata.normalize('NFKD', val_str).encode('ASCII', 'ignore').decode('ASCII')
+        val_str = re.sub(r'\s+', ' ', val_str)
         return mapping.get(val_str, "indefinido")
 
     df = df.copy()
@@ -128,27 +131,28 @@ def inferir_periodicidade(db: Session, df_historico: pd.DataFrame, conceitos: Di
     """RN03: Infere se a disciplina é ofertada em semestre ímpar, par ou ambos."""
     col_hist_cod = 'cod_ativ_curric'
     col_periodo = 'periodo'
-    
-    # Dicionário de (curso, conceito_id) -> set de semestres letivos observados ('impar', 'par')
+    col_curso = 'cod_curso'
+
+    # Otimização: reduz para linhas únicas de (curso, código, período)
+    df_subset = df_historico[[col_curso, col_hist_cod, col_periodo]].dropna().drop_duplicates().copy()
+    df_subset['semestre_tipo'] = df_subset[col_periodo].apply(obter_tipo_semestre)
+    df_subset = df_subset[df_subset['semestre_tipo'] != '']
+
     observacoes: Dict[Tuple[str, str], Set[str]] = {}
-    
-    for _, row in df_historico.iterrows():
-        curso = str(row['cod_curso'])
+
+    for _, row in df_subset.iterrows():
+        curso = str(row[col_curso])
         codigo = str(row[col_hist_cod])
         c_id = conceitos.get((curso, codigo))
-        
+
         if not c_id:
             continue
-            
-        periodo_tipo = obter_tipo_semestre(row[col_periodo])
-        if not periodo_tipo:
-            continue
-            
+
         chave = (curso, c_id)
         if chave not in observacoes:
             observacoes[chave] = set()
-        observacoes[chave].add(periodo_tipo)
-        
+        observacoes[chave].add(row['semestre_tipo'])
+
     for (curso, c_id), semestres in observacoes.items():
         if "impar" in semestres and "par" in semestres:
             periodicidade = "ambos"
@@ -158,74 +162,91 @@ def inferir_periodicidade(db: Session, df_historico: pd.DataFrame, conceitos: Di
             periodicidade = "par"
         else:
             continue
-            
-        # Busca o VinculoCurricular e atualiza a periodicidade
+
         vinc = db.query(VinculoCurricular).filter(
             VinculoCurricular.curso_codigo == curso,
             VinculoCurricular.conceito_id == c_id
         ).first()
-        
+
         if vinc:
             vinc.periodicidade_oferta = periodicidade
-            
+
     db.commit()
 
 
 def gravar_historico(db: Session, df: pd.DataFrame, conceitos: Dict[Tuple[str, str], str]):
-    """Insere ou atualiza os históricos e alunos no banco de dados."""
+    """Insere ou atualiza os históricos e alunos no banco de dados em lotes eficientes."""
     col_mat = 'matricula'
     col_hist_cod = 'cod_ativ_curric'
     col_periodo = 'periodo'
     col_ano = 'ano'
     col_sit_mat = 'situacao_da_matricula'
-    
+    col_curso = 'cod_curso'
+
     # 1. Garante que todos os alunos vistos no histórico existam no banco
-    alunos_unicos = df[[col_mat, 'cod_curso']].drop_duplicates()
+    print("Processando alunos...")
+    # Determina o semestre de ingresso a partir do registro mais antigo de cada aluno de forma vetorizada
+    df_ordenado = df.sort_values(by=[col_ano, col_periodo])
+    df_primeiro_reg = df_ordenado.drop_duplicates(subset=[col_mat], keep='first')
+    
+    ingress_map = {}
+    for _, row in df_primeiro_reg.iterrows():
+        p_ano = str(row[col_ano]) if pd.notna(row[col_ano]) else "2023"
+        p_per = str(row[col_periodo]) if pd.notna(row[col_periodo]) else "1"
+        sem_tipo = "1" if obter_tipo_semestre(p_per) == "impar" else "2"
+        ingress_map[str(row[col_mat])] = f"{p_ano}/{sem_tipo}"
+
+    alunos_unicos = df[[col_mat, col_curso]].drop_duplicates()
+    alunos_existentes = set(r[0] for r in db.query(Aluno.matricula).all())
+    alunos_a_criar = []
+
     for _, row in alunos_unicos.iterrows():
         mat = str(row[col_mat])
-        curso = str(row['cod_curso'])
-        
-        aluno_existente = db.query(Aluno).filter(Aluno.matricula == mat).first()
-        if not aluno_existente:
-            # Obtém semestre de ingresso a partir do primeiro registro histórico
-            match = df[df[col_mat] == row[col_mat]].sort_values(by=['ano', col_periodo])
-            ingresso = "2023/1"
-            if not match.empty:
-                primeiro_ano = match.iloc[0]['ano']
-                primeiro_per = match.iloc[0][col_periodo]
-                sem_tipo = "1" if obter_tipo_semestre(primeiro_per) == "impar" else "2"
-                ingresso = f"{primeiro_ano}/{sem_tipo}"
-                
-            aluno_novo = Aluno(
+        curso = str(row[col_curso])
+        if mat not in alunos_existentes:
+            ingresso = ingress_map.get(mat, "2023/1")
+            alunos_a_criar.append(Aluno(
                 matricula=mat,
                 curso_codigo=curso,
                 semestre_ingresso=ingresso
-            )
-            db.add(aluno_novo)
-    db.commit()
+            ))
+            alunos_existentes.add(mat)
 
-    # 2. Grava cada linha de histórico
-    for _, row in df.iterrows():
-        mat = str(row[col_mat])
-        curso = str(row['cod_curso'])
-        codigo = str(row[col_hist_cod])
-        ano = int(row[col_ano])
-        per = str(row[col_periodo])
+    if alunos_a_criar:
+        print(f"Inserindo {len(alunos_a_criar)} novos alunos no banco...")
+        db.bulk_save_objects(alunos_a_criar)
+        db.commit()
+
+    # 2. Grava cada linha de histórico em lotes
+    print("Gravando registros de histórico...")
+    codigos_desconhecidos = set()
+    lote_historico = []
+    tamanho_lote = 5000
+    total_linhas = len(df)
+
+    for idx, row in enumerate(df.itertuples(index=False), 1):
+        mat = str(getattr(row, col_mat))
+        curso = str(getattr(row, col_curso))
+        codigo = str(getattr(row, col_hist_cod))
         
-        # Converte para formato ex: 2026/1
+        try:
+            ano = int(float(getattr(row, col_ano)))
+        except (ValueError, TypeError):
+            ano = 2023
+            
+        per = str(getattr(row, col_periodo))
         sem_tipo = "1" if obter_tipo_semestre(per) == "impar" else "2"
         periodo_letivo = f"{ano}/{sem_tipo}"
-        
-        situacao_canon = row['situacao_canoniva']
-        situacao_mat = str(row[col_sit_mat]) if pd.notna(row[col_sit_mat]) else "Aluno Regular"
 
-        # Verifica se o código resolve para algum conceito conhecido
+        situacao_canon = getattr(row, 'situacao_canoniva')
+        sit_mat_val = getattr(row, col_sit_mat)
+        situacao_mat = str(sit_mat_val) if pd.notna(sit_mat_val) else "Aluno Regular"
+
         c_id = conceitos.get((curso, codigo))
-        if not c_id:
-            msg = f"Aviso: Linha de histórico para código {codigo} (curso {curso}) não pôde ser associada a nenhum conceito conhecido."
-            EXCECOES.append(msg)
+        if not c_id and (curso, codigo) not in codigos_desconhecidos:
+            codigos_desconhecidos.add((curso, codigo))
+            EXCECOES.append(f"Aviso: Código {codigo} no histórico do curso {curso} não pôde ser associado a nenhum conceito conhecido.")
 
-        # Insere histórico
         hist_novo = Historico(
             aluno_matricula=mat,
             curso_codigo=curso,
@@ -234,6 +255,15 @@ def gravar_historico(db: Session, df: pd.DataFrame, conceitos: Dict[Tuple[str, s
             situacao=situacao_canon,
             situacao_matricula=situacao_mat
         )
-        db.add(hist_novo)
-        
-    db.commit()
+        lote_historico.append(hist_novo)
+
+        if len(lote_historico) >= tamanho_lote:
+            db.bulk_save_objects(lote_historico)
+            db.commit()
+            lote_historico = []
+            print(f"Progresso histórico: {idx}/{total_linhas} linhas salvas...")
+
+    if lote_historico:
+        db.bulk_save_objects(lote_historico)
+        db.commit()
+        print(f"Progresso histórico: {total_linhas}/{total_linhas} linhas salvas com sucesso.")

@@ -25,9 +25,11 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-data/raw/*.json
-data/raw/*.zip
-data/raw/*.csv
+data/raw/*
+!data/raw/__init__.py
+!data/raw/__inity__.py
+!data/raw/.gitkeep
+*.db
 
 # PyInstaller
 #   Usually these files are written by a python script from a template

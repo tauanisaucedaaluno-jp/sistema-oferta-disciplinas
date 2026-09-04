@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import logoImg from "../assets/logo.png";
 
 interface DemandaPorCurso {
@@ -215,8 +215,12 @@ export default function Dashboard({
                 {/* Fallback caso a API de cursos falhe */}
                 {cursos.length === 0 && (
                   <>
-                    <option value="CC">Ciência da Computação (CC)</option>
-                    <option value="ES">Engenharia de Software (ES)</option>
+                    <option value="ALES">Engenharia de Software (ALES)</option>
+                    <option value="ALEC">Engenharia Civil (ALEC)</option>
+                    <option value="ALEE">Engenharia Elétrica (ALEE)</option>
+                    <option value="ALEM">Engenharia Mecânica (ALEM)</option>
+                    <option value="ALEA">Engenharia Agrícola (ALEA)</option>
+                    <option value="ALET">Engenharia de Telecomunicações (ALET)</option>
                   </>
                 )}
               </select>
@@ -292,9 +296,8 @@ export default function Dashboard({
                     const isExpandida = expandidos.has(item.conceito_id);
 
                     return (
-                      <>
+                      <React.Fragment key={item.conceito_id}>
                         <tr
-                          key={item.conceito_id}
                           onClick={(e) => {
                             if (curso === "TODOS" && isCompartilhada) {
                               toggleExpandido(item.conceito_id, e);
@@ -360,7 +363,7 @@ export default function Dashboard({
                             </td>
                           </tr>
                         ))}
-                      </>
+                      </React.Fragment>
                     );
                   })}
                 </tbody>

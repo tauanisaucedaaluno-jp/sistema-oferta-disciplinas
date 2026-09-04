@@ -30,6 +30,21 @@ interface DetalheProps {
 
 const API_BASE = "http://localhost:8000";
 
+function getMatricula(item: any): string {
+  if (item === null || item === undefined) return "Desconhecido";
+  if (typeof item === "string" || typeof item === "number") return String(item);
+  if (typeof item === "object") {
+    return item.matricula || item.aluno_matricula || item.id || String(item);
+  }
+  return String(item);
+}
+
+function getProbabilidade(item: any): number {
+  if (!item || typeof item !== "object") return 0.5;
+  const p = item.probabilidade ?? item.probabilidade_aprovacao ?? item.prob;
+  return typeof p === "number" && !isNaN(p) ? p : 0.5;
+}
+
 export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBack }: DetalheProps) {
   const [detalhe, setDetalhe] = useState<DetalheDemanda | null>(null);
   const [loading, setLoading] = useState(false);
@@ -67,6 +82,10 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
 
     fetchDetalhe();
   }, [cursoCodigo, conceitoId, periodo, token]);
+
+  const listA = Array.isArray(detalhe?.grupo_a) ? detalhe!.grupo_a : [];
+  const listB = Array.isArray(detalhe?.grupo_b) ? detalhe!.grupo_b : [];
+  const listC = Array.isArray(detalhe?.grupo_c) ? detalhe!.grupo_c : [];
 
   return (
     <div className="detalhe-container">
@@ -132,22 +151,22 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
           <div className="summary-cards-row">
             <div className={`summary-card card-a ${activeTab === "A" ? "active" : ""}`} onClick={() => setActiveTab("A")}>
               <h4>Grupo A</h4>
-              <span className="summary-number">{detalhe.grupo_a.length}</span>
+              <span className="summary-number">{listA.length}</span>
               <p>Cursando agora</p>
             </div>
             <div className={`summary-card card-b ${activeTab === "B" ? "active" : ""}`} onClick={() => setActiveTab("B")}>
               <h4>Grupo B</h4>
-              <span className="summary-number">{detalhe.grupo_b.length}</span>
+              <span className="summary-number">{listB.length}</span>
               <p>Aptos (pré-req. OK)</p>
             </div>
             <div className={`summary-card card-c ${activeTab === "C" ? "active" : ""}`} onClick={() => setActiveTab("C")}>
               <h4>Grupo C</h4>
-              <span className="summary-number">{detalhe.grupo_c.length}</span>
+              <span className="summary-number">{listC.length}</span>
               <p>Potenciais (cursando pré-req.)</p>
             </div>
           </div>
 
-          <div className="audit-list-card">
+          <div key={activeTab} className="audit-list-card">
             <div className="card-header">
               <h3>
                 {activeTab === "A" && "Grupo A — Alunos Atualmente Matriculados"}
@@ -161,53 +180,63 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
               </p>
             </div>
 
-            <div className="list-content">
+            <div key={`content-${activeTab}`} className="list-content">
               {activeTab === "A" && (
-                detalhe.grupo_a.length === 0 ? (
-                  <p className="no-students">Nenhum aluno matriculado neste período.</p>
+                listA.length === 0 ? (
+                  <p key="no-students-a" className="no-students">Nenhum aluno matriculado neste período.</p>
                 ) : (
-                  <ul className="student-list">
-                    {detalhe.grupo_a.map((matricula) => (
-                      <li key={matricula} className="student-item">
-                        <span className="student-icon">👤</span>
-                        <span className="student-matricula">Matrícula: <strong>{matricula}</strong></span>
-                        <span className="student-status active">Matriculado (Peso 1.0)</span>
-                      </li>
-                    ))}
+                  <ul key="list-students-a" className="student-list">
+                    {listA.map((item, idx) => {
+                      const mat = getMatricula(item);
+                      return (
+                        <li key={`student-a-${mat}-${idx}`} className="student-item">
+                          <span className="student-icon">👤</span>
+                          <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
+                          <span className="student-status active">Matriculado (Peso 1.0)</span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )
               )}
 
               {activeTab === "B" && (
-                detalhe.grupo_b.length === 0 ? (
-                  <p className="no-students">Nenhum aluno apto encontrado.</p>
+                listB.length === 0 ? (
+                  <p key="no-students-b" className="no-students">Nenhum aluno apto encontrado.</p>
                 ) : (
-                  <ul className="student-list">
-                    {detalhe.grupo_b.map((matricula) => (
-                      <li key={matricula} className="student-item">
-                        <span className="student-icon">👤</span>
-                        <span className="student-matricula">Matrícula: <strong>{matricula}</strong></span>
-                        <span className="student-status eligible">Apto a cursar (Peso 1.0)</span>
-                      </li>
-                    ))}
+                  <ul key="list-students-b" className="student-list">
+                    {listB.map((item, idx) => {
+                      const mat = getMatricula(item);
+                      return (
+                        <li key={`student-b-${mat}-${idx}`} className="student-item">
+                          <span className="student-icon">👤</span>
+                          <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
+                          <span className="student-status eligible">Apto a cursar (Peso 1.0)</span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )
               )}
 
               {activeTab === "C" && (
-                detalhe.grupo_c.length === 0 ? (
-                  <p className="no-students">Nenhum aluno cursando pré-requisitos atualmente.</p>
+                listC.length === 0 ? (
+                  <p key="no-students-c" className="no-students">Nenhum aluno cursando pré-requisitos atualmente.</p>
                 ) : (
-                  <ul className="student-list">
-                    {detalhe.grupo_c.map((aluno) => (
-                      <li key={aluno.matricula} className="student-item">
-                        <span className="student-icon">👤</span>
-                        <span className="student-matricula">Matrícula: <strong>{aluno.matricula}</strong></span>
-                        <span className="student-probability">
-                          Probabilidade de aprovação: <strong>{(aluno.probabilidade * 100).toFixed(1)}%</strong>
-                        </span>
-                      </li>
-                    ))}
+                  <ul key="list-students-c" className="student-list">
+                    {listC.map((item, idx) => {
+                      const mat = getMatricula(item);
+                      const prob = getProbabilidade(item);
+                      return (
+                        <li key={`student-c-${mat}-${idx}`} className="student-item">
+                          <span className="student-icon">👤</span>
+                          <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
+                          <span className="student-probability">
+                            Probabilidade de aprovação: <strong>{(prob * 100).toFixed(1)}%</strong>
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )
               )}

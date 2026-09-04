@@ -27,34 +27,39 @@ def normalizar_nome(nome: str) -> str:
 
 
 def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
-    def _match(col: str) -> str:
-        col_norm = col.lower().strip()
-        col_norm = unicodedata.normalize('NFKD', col_norm).encode('ASCII', 'ignore').decode('ASCII')
-        if 'curso' in col_norm:
-            if 'cod' in col_norm:
-                return 'cod_curso'
-            return 'curso'
-        if 'disciplina' in col_norm or 'ativ' in col_norm:
-            if 'cod' in col_norm:
-                return 'cod_disciplina'
-            if 'nome' in col_norm:
-                return 'nome_disciplina'
-            if 'tipo' in col_norm:
-                return 'tipo_disciplina'
-        if 'periodo' in col_norm or 'perio' in col_norm:
-            return 'periodo_ideal'
-        if 'req' in col_norm:
-            return 'pre_requisitos'
-        if 'equiv' in col_norm:
-            return 'equivalencias'
-        if 'situ' in col_norm:
-            return 'situacao'
-        if 'vers' in col_norm:
-            return 'num_versao'
-        return col
-    df = df.copy()
-    df.columns = [_match(col) for col in df.columns]
-    return df
+    col_map = {}
+    for col in df.columns:
+        c = unicodedata.normalize('NFKD', str(col).lower().strip()).encode('ASCII', 'ignore').decode('ASCII')
+        c = re.sub(r'[^a-z0-9_]', '_', c).strip('_')
+
+        if c == 'cod_curso' or (c.startswith('cod') and 'curso' in c):
+            col_map[col] = 'cod_curso'
+        elif c == 'curso' or c == 'nome_curso':
+            col_map[col] = 'curso'
+        elif c in ('cod_disciplina', 'cod_ativ_curric', 'cod_ativ') or (c.startswith('cod') and ('disc' in c or 'ativ' in c)):
+            col_map[col] = 'cod_disciplina'
+        elif c in ('nome_disciplina', 'nome_ativ_curric', 'disciplina') or (c.startswith('nome') and ('disc' in c or 'ativ' in c)):
+            col_map[col] = 'nome_disciplina'
+        elif 'tipo' in c and 'disc' in c:
+            col_map[col] = 'tipo_disciplina'
+        elif c == 'periodo_ideal':
+            col_map[col] = 'periodo_ideal'
+        elif c == 'semestre_ideal' and 'periodo_ideal' not in df.columns:
+            col_map[col] = 'periodo_ideal'
+        elif 'req' in c:
+            col_map[col] = 'pre_requisitos'
+        elif 'equiv' in c:
+            col_map[col] = 'equivalencias'
+        elif c == 'situacao' or (c.startswith('situ') and 'disc' not in c and 'mat' not in c):
+            col_map[col] = 'situacao'
+        elif c == 'num_versao':
+            col_map[col] = 'num_versao'
+        elif c == 'versao':
+            col_map[col] = 'versao'
+        else:
+            col_map[col] = col
+
+    return df.rename(columns=col_map)
 
 
 def ler_csv_curriculo(caminho: str) -> pd.DataFrame:
@@ -67,26 +72,42 @@ def ler_csv_curriculo(caminho: str) -> pd.DataFrame:
 
 
 def deduplicar_versoes(df: pd.DataFrame) -> pd.DataFrame:
-    """Mantém apenas a versão ativa/corrente mais recente de cada disciplina por curso."""
+    """
+    Mantém apenas a versão ativa/corrente mais recente de cada disciplina por curso.
+    Prioriza a versão marcada como 'CORRENTE', depois 'ATIVO', e a versão mais recente.
+    """
     if df.empty:
         return df
 
-    # Filtra apenas registros ativos
-    df_ativos = df[df['situacao'].astype(str).str.upper() == 'ATIVA'].copy()
-    if df_ativos.empty:
-        df_ativos = df.copy()  # Fallback se nada estiver marcado como ativo
+    # Filtra apenas registros ativos se a coluna 'situacao' existir
+    if 'situacao' in df.columns:
+        mask_ativa = df['situacao'].astype(str).str.upper().str.contains('ATIVA')
+        df_ativos = df[mask_ativa].copy()
+        if df_ativos.empty:
+            df_ativos = df.copy()
+    else:
+        df_ativos = df.copy()
 
-    # Determina a coluna de versão
-    col_versao = 'num_versao' if 'num_versao' in df_ativos.columns else ('versao' if 'versao' in df_ativos.columns else None)
-    
-    if col_versao:
-        # Garante tipo numérico para ordenação correta
-        df_ativos[col_versao] = pd.to_numeric(df_ativos[col_versao], errors='coerce').fillna(0)
-        # Ordena pela versão de forma decrescente
-        df_ativos = df_ativos.sort_values(by=col_versao, ascending=False)
+    # Prioriza versao == 'CORRENTE' (peso 2), depois 'ATIVO' (peso 1)
+    if 'versao' in df_ativos.columns:
+        df_ativos['_peso_versao'] = df_ativos['versao'].astype(str).str.upper().map({
+            'CORRENTE': 2,
+            'ATIVO': 1
+        }).fillna(0)
+    else:
+        df_ativos['_peso_versao'] = 0
 
-    # Deduplica mantendo a primeira ocorrência (a mais recente devido à ordenação)
-    df_dedup = df_ativos.drop_duplicates(subset=['cod_curso', 'cod_disciplina'], keep='first')
+    # Extrai ano numérico da coluna num_versao (ex: '2023', '2014T' -> 2014)
+    col_num_versao = 'num_versao' if 'num_versao' in df_ativos.columns else None
+    if col_num_versao:
+        df_ativos['_ano_versao'] = df_ativos[col_num_versao].astype(str).str.extract(r'(\d+)')[0]
+        df_ativos['_ano_versao'] = pd.to_numeric(df_ativos['_ano_versao'], errors='coerce').fillna(0)
+    else:
+        df_ativos['_ano_versao'] = 0
+
+    df_ativos = df_ativos.sort_values(by=['_peso_versao', '_ano_versao'], ascending=[False, False])
+    df_dedup = df_ativos.drop_duplicates(subset=['cod_curso', 'cod_disciplina'], keep='first').copy()
+    df_dedup = df_dedup.drop(columns=['_peso_versao', '_ano_versao'], errors='ignore')
     return df_dedup
 
 
@@ -183,22 +204,25 @@ def construir_conceitos(db: Session, df_curriculo: pd.DataFrame, df_historico: p
                         mapeamento_codigo_conceito[(curso, c_codigo)] = conceito_id_atual
 
     # 5. Salva os conceitos no banco
+    conceitos_existentes = set(r[0] for r in db.query(ConceitoDisciplina.id).all())
+    novos_conceitos = []
     for c_id, grupo in conceitos_grupos.items():
-        # Verifica se já existe
-        c_existente = db.query(ConceitoDisciplina).filter(ConceitoDisciplina.id == c_id).first()
-        if not c_existente:
-            c_novo = ConceitoDisciplina(
+        if c_id not in conceitos_existentes:
+            novos_conceitos.append(ConceitoDisciplina(
                 id=c_id,
                 curso_codigo=grupo["curso"],
                 nome_normalizado=grupo["nome_normalizado"]
-            )
-            db.add(c_novo)
+            ))
+            conceitos_existentes.add(c_id)
             
+    if novos_conceitos:
+        db.bulk_save_objects(novos_conceitos)
     db.commit()
 
     # 6. Salva os códigos brutos de tradução no banco
+    cods_existentes = set((r[0], r[1]) for r in db.query(CodigoDisciplina.codigo, CodigoDisciplina.curso_codigo).all())
+    novos_codigos = []
     for (curso, codigo), c_id in mapeamento_codigo_conceito.items():
-        # Busca se há versão do PPC e situação curriculo do df_curriculo
         match = df_curriculo[(df_curriculo['cod_curso'] == curso) & (df_curriculo['cod_disciplina'] == codigo)]
         versao = None
         situacao = "CORRENTE"
@@ -206,29 +230,23 @@ def construir_conceitos(db: Session, df_curriculo: pd.DataFrame, df_historico: p
         if not match.empty:
             col_versao = 'num_versao' if 'num_versao' in match.columns else ('versao' if 'versao' in match.columns else None)
             if col_versao:
-                versao = int(pd.to_numeric(match.iloc[0][col_versao], errors='coerce') or 2023)
+                v_str = str(match.iloc[0][col_versao])
+                num_match = re.search(r'\d+', v_str)
+                versao = int(num_match.group(0)) if num_match else 2023
             situacao = str(match.iloc[0]['situacao']) if 'situacao' in match.columns else "CORRENTE"
 
-        cod_existente = db.query(CodigoDisciplina).filter(
-            CodigoDisciplina.codigo == codigo,
-            CodigoDisciplina.curso_codigo == curso
-        ).first()
-        
-        if not cod_existente:
-            cod_novo = CodigoDisciplina(
+        if (codigo, curso) not in cods_existentes:
+            novos_codigos.append(CodigoDisciplina(
                 codigo=codigo,
                 curso_codigo=curso,
                 conceito_id=c_id,
                 versao_ppc_origem=versao,
                 situacao_curriculo=situacao
-            )
-            db.add(cod_novo)
-        else:
-            cod_existente.conceito_id = c_id
-            if versao:
-                cod_existente.versao_ppc_origem = versao
-            cod_existente.situacao_curriculo = situacao
+            ))
+            cods_existentes.add((codigo, curso))
 
+    if novos_codigos:
+        db.bulk_save_objects(novos_codigos)
     db.commit()
     return mapeamento_codigo_conceito
 
@@ -243,7 +261,10 @@ def montar_vinculos_curriculares(db: Session, df_curriculo: pd.DataFrame, concei
         if not c_id:
             continue
         periodo_ideal = row['periodo_ideal']
-        p_ideal = int(periodo_ideal) if pd.notna(periodo_ideal) else None
+        try:
+            p_ideal = int(float(periodo_ideal)) if pd.notna(periodo_ideal) else None
+        except (ValueError, TypeError):
+            p_ideal = None
         
         chave = (curso, c_id)
         if chave not in vinculos_a_criar:
@@ -252,24 +273,20 @@ def montar_vinculos_curriculares(db: Session, df_curriculo: pd.DataFrame, concei
             if p_ideal is not None and (vinculos_a_criar[chave] is None or p_ideal < vinculos_a_criar[chave]):
                 vinculos_a_criar[chave] = p_ideal
 
+    vinculos_existentes = set((r[0], r[1]) for r in db.query(VinculoCurricular.curso_codigo, VinculoCurricular.conceito_id).all())
+    novos_vinculos = []
     for (curso, c_id), p_ideal in vinculos_a_criar.items():
-        vinc_existente = db.query(VinculoCurricular).filter(
-            VinculoCurricular.curso_codigo == curso,
-            VinculoCurricular.conceito_id == c_id
-        ).first()
-        
-        if not vinc_existente:
-            vinc_novo = VinculoCurricular(
+        if (curso, c_id) not in vinculos_existentes:
+            novos_vinculos.append(VinculoCurricular(
                 curso_codigo=curso,
                 conceito_id=c_id,
                 periodo_sugerido=p_ideal,
                 periodicidade_oferta=None
-            )
-            db.add(vinc_novo)
-        else:
-            if p_ideal is not None:
-                vinc_existente.periodo_sugerido = p_ideal
-                
+            ))
+            vinculos_existentes.add((curso, c_id))
+
+    if novos_vinculos:
+        db.bulk_save_objects(novos_vinculos)
     db.commit()
 
 
@@ -303,22 +320,22 @@ def montar_pre_requisitos(db: Session, df_curriculo: pd.DataFrame, conceitos: Di
                 
             prereqs_a_criar.add((curso, c_id, p_conceito_id))
             
+    prereqs_existentes = set((r[0], r[1], r[2]) for r in db.query(
+        PreRequisito.curso_codigo, PreRequisito.conceito_id, PreRequisito.conceito_prerequisito_id
+    ).all())
+    novos_prereqs = []
     for curso, c_id, p_conceito_id in prereqs_a_criar:
-        prereq_existente = db.query(PreRequisito).filter(
-            PreRequisito.curso_codigo == curso,
-            PreRequisito.conceito_id == c_id,
-            PreRequisito.conceito_prerequisito_id == p_conceito_id
-        ).first()
-        
-        if not prereq_existente:
-            prereq_novo = PreRequisito(
+        if (curso, c_id, p_conceito_id) not in prereqs_existentes:
+            novos_prereqs.append(PreRequisito(
                 curso_codigo=curso,
                 conceito_id=c_id,
                 conceito_prerequisito_id=p_conceito_id,
                 grupo_alternativo=None
-            )
-            db.add(prereq_novo)
+            ))
+            prereqs_existentes.add((curso, c_id, p_conceito_id))
             
+    if novos_prereqs:
+        db.bulk_save_objects(novos_prereqs)
     db.commit()
 
 
