@@ -127,6 +127,35 @@ def excluir_evadidos(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def filtrar_por_ano_corte(df: pd.DataFrame, ano_corte: int = None) -> pd.DataFrame:
+    """
+    Descarta registros históricos com ano letivo anterior ao ano de corte.
+    Evita redundância de dados históricos antigos (ex.: 2006-2015) que já não
+    impactam o planejamento presente e futuro de oferta de disciplinas.
+    """
+    if df.empty or 'ano' not in df.columns:
+        return df
+
+    if ano_corte is None:
+        try:
+            from config import settings
+            ano_corte = getattr(settings, "historico_ano_corte", 2016)
+        except Exception:
+            ano_corte = int(os.getenv("HISTORICO_ANO_CORTE", "2016"))
+
+    def _parse_ano(val):
+        try:
+            return int(float(str(val).strip()))
+        except (ValueError, TypeError):
+            return 2026
+
+    mask = df['ano'].apply(_parse_ano) >= ano_corte
+    removidas = len(df) - mask.sum()
+    if removidas > 0:
+        print(f"Filtro de corte ({ano_corte}+): {removidas} registros anteriores a {ano_corte} descartados.")
+    return df[mask].copy()
+
+
 def inferir_periodicidade(db: Session, df_historico: pd.DataFrame, conceitos: Dict[Tuple[str, str], str]):
     """RN03: Infere se a disciplina é ofertada em semestre ímpar, par ou ambos."""
     col_hist_cod = 'cod_ativ_curric'

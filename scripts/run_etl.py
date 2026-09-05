@@ -41,6 +41,7 @@ from etl.importar_historico import (
     ler_historico,
     normalizar_situacao,
     excluir_evadidos,
+    filtrar_por_ano_corte,
     inferir_periodicidade,
     gravar_historico,
 )
@@ -172,6 +173,7 @@ def main():
         print("Normalizando situações das disciplinas...")
         df_historico = normalizar_situacao(df_historico_raw)
         df_historico = excluir_evadidos(df_historico)
+        df_historico = filtrar_por_ano_corte(df_historico)
 
         print("\n--- PASSO 3: Construindo Conceitos e Códigos ---")
         conceitos_map = construir_conceitos(db, df_curriculo, df_historico)

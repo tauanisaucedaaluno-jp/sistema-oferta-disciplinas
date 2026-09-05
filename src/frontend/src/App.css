@@ -966,3 +966,453 @@ body {
   opacity: 1;
   text-decoration: underline;
 }
+
+/* ============================================================
+   10. REMOÇÃO DE MATRÍCULA (GRUPO A) — MODAL E BOTÃO
+   ============================================================ */
+.student-item-main {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1;
+}
+
+.btn-delete-student {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+  font-size: 1.05rem;
+  transition: all 0.2s ease;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-delete-student:hover {
+  opacity: 1;
+  background-color: rgba(220, 53, 69, 0.12);
+  border-color: rgba(220, 53, 69, 0.3);
+  transform: scale(1.08);
+}
+
+.toast-notification {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  background-color: #276749;
+  color: white;
+  padding: 0.85rem 1.4rem;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.92rem;
+  font-weight: 500;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  animation: toastFadeIn 0.3s ease;
+}
+
+@keyframes toastFadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Modal Overlay & Card */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1500;
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.15s ease;
+}
+
+.modal-card {
+  background-color: var(--card-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--card-border);
+  width: 92%;
+  max-width: 520px;
+  padding: 1.75rem;
+  animation: modalScaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalScaleIn {
+  from { opacity: 0; transform: scale(0.95) translateY(-8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-header h3 {
+  margin: 0 0 0.4rem 0;
+  color: #c53030;
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.modal-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.modal-body {
+  margin: 1.25rem 0 1rem 0;
+}
+
+.modal-info-box {
+  background-color: var(--bg-app);
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--card-border);
+  margin-bottom: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.modal-info-row {
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.modal-info-row strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.modal-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.4rem;
+}
+
+.modal-textarea {
+  width: 100%;
+  min-height: 85px;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  background-color: #fff;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.modal-textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(74, 124, 63, 0.18);
+}
+
+.modal-error-box {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  background-color: #fff5f5;
+  border: 1px solid #feb2b2;
+  border-radius: var(--radius-sm);
+  color: #c53030;
+  font-size: 0.85rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.btn-danger {
+  background-color: #c53030;
+  color: #ffffff;
+  border: none;
+  padding: 0.6rem 1.1rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #9b2c2c;
+  transform: translateY(-1px);
+}
+
+.btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   MODAL DE UPLOAD DE DADOS ACADÊMICOS
+   ============================================================ */
+.modal-card-lg {
+  max-width: 620px;
+}
+
+.upload-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.upload-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.upload-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.upload-input {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1px dashed var(--card-border);
+  background-color: var(--bg-app);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.upload-input:hover:not(:disabled) {
+  border-color: var(--primary);
+  background-color: rgba(74, 124, 63, 0.04);
+}
+
+.upload-file-count {
+  font-size: 0.8rem;
+  color: var(--primary);
+  font-weight: 600;
+  margin-top: 0.2rem;
+}
+
+.upload-benchmark-note {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-sm);
+  color: #166534;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.modal-success-box {
+  padding: 0.65rem 0.85rem;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-sm);
+  color: #15803d;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.upload-spinner-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.spinner-inline {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.mt-3 {
+  margin-top: 0.85rem;
+}
+
+/* ============================================================
+   GESTÃO DE SEMESTRES (NOVO / EXCLUIR)
+   ============================================================ */
+.label-with-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+.label-with-actions label {
+  margin-bottom: 0;
+}
+
+.period-action-buttons {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.btn-period-action {
+  background: none;
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.btn-add-period {
+  color: var(--primary);
+  background-color: rgba(74, 124, 63, 0.08);
+  border-color: rgba(74, 124, 63, 0.25);
+}
+
+.btn-add-period:hover {
+  background-color: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.btn-delete-period {
+  color: #c53030;
+  background-color: rgba(197, 48, 48, 0.06);
+  border-color: rgba(197, 48, 48, 0.2);
+}
+
+.btn-delete-period:hover:not(:disabled) {
+  background-color: #c53030;
+  color: #fff;
+  border-color: #c53030;
+}
+
+.btn-delete-period:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.semester-inputs-row {
+  display: flex;
+  gap: 1rem;
+}
+
+.form-control {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  background-color: #fff;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-control:focus {
+  border-color: var(--primary);
+}
+
+.semester-preview-badge {
+  padding: 0.6rem 0.8rem;
+  background-color: rgba(74, 124, 63, 0.08);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--primary-dark);
+  text-align: center;
+}
+
+.delete-warning-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  background-color: #fff5f5;
+  border: 1px solid #feb2b2;
+  border-radius: var(--radius-sm);
+  color: #9b2c2c;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.warning-icon {
+  font-size: 1.25rem;
+}
+
+.semester-empty-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow-sm);
+  gap: 1rem;
+}
+
+.semester-empty-banner-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.semester-empty-banner-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.semester-empty-banner-content strong {
+  color: var(--primary-dark);
+  font-size: 0.92rem;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.semester-empty-banner-content p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #166534;
+  line-height: 1.4;
+}
+
+.semester-empty-banner-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+
+

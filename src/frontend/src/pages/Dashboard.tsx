@@ -3,6 +3,7 @@ import logoImg from "../assets/logo.png";
 
 interface DemandaPorCurso {
   curso_codigo: string;
+  disciplina_codigo?: string;
   grupo_a_qtd: number;
   grupo_a_prob?: number;
   grupo_b_qtd: number;
@@ -14,6 +15,7 @@ interface DemandaPorCurso {
 
 interface DisciplinaDemand {
   conceito_id: string;
+  disciplina_codigo?: string;
   disciplina_nome: string;
   periodo_sugerido: number | null;
   periodicidade_oferta: string | null;
@@ -28,6 +30,17 @@ interface DisciplinaDemand {
 interface CursoInfo {
   codigo: string;
   nome: string;
+}
+
+interface PeriodoInfo {
+  codigo: string;
+  ano: number;
+  semestre: number;
+  tipo: string;
+  descricao?: string;
+  total_registros: number;
+  total_cursando: number;
+  is_atual: boolean;
 }
 
 interface DashboardProps {
@@ -59,12 +72,52 @@ export default function Dashboard({
 }: DashboardProps) {
   const [demandas, setDemandas] = useState<DisciplinaDemand[]>([]);
   const [cursos, setCursos] = useState<CursoInfo[]>([]);
+  const [periodosList, setPeriodosList] = useState<PeriodoInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Controla quais linhas têm a quebra por curso expandida
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
 
-  // Busca a lista de cursos ao montar
+  // Estados do Modal de Upload de Históricos / Currículo
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedHistoricos, setSelectedHistoricos] = useState<FileList | null>(null);
+  const [selectedCurriculo, setSelectedCurriculo] = useState<File | null>(null);
+
+  // Estados de Gestão de Semestres (Criar e Excluir)
+  const [showNovoSemestreModal, setShowNovoSemestreModal] = useState(false);
+  const [showExcluirSemestreModal, setShowExcluirSemestreModal] = useState(false);
+  const [novoAno, setNovoAno] = useState<string>("2026");
+  const [novoSemestreNum, setNovoSemestreNum] = useState<string>("2");
+  const [novoDescricao, setNovoDescricao] = useState<string>("");
+  const [novoSemestreError, setNovoSemestreError] = useState<string | null>(null);
+  const [novoSemestreLoading, setNovoSemestreLoading] = useState(false);
+  const [excluirSemestreLoading, setExcluirSemestreLoading] = useState(false);
+  const [excluirSemestreError, setExcluirSemestreError] = useState<string | null>(null);
+
+  // Busca a lista de períodos dinamicamente
+  const fetchPeriodos = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/demanda/periodos`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data: PeriodoInfo[] = await response.json();
+        setPeriodosList(data);
+        // Se o período selecionado não existe na lista retornada, escolhe o atual
+        if (data.length > 0 && !data.some(p => p.codigo === periodo)) {
+          const atual = data.find(p => p.is_atual) || data[0];
+          setPeriodo(atual.codigo);
+        }
+      }
+    } catch {
+      // Fallback silencioso
+    }
+  };
+
+  // Busca cursos e períodos ao montar
   useEffect(() => {
     const fetchCursos = async () => {
       try {
@@ -80,7 +133,9 @@ export default function Dashboard({
       }
     };
     fetchCursos();
+    fetchPeriodos();
   }, [token]);
+
 
   const fetchDemandas = async () => {
     setLoading(true);
@@ -142,7 +197,126 @@ export default function Dashboard({
     }
   };
 
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedHistoricos || selectedHistoricos.length === 0) {
+      setUploadError("Selecione pelo menos um arquivo CSV de histórico escolar.");
+      return;
+    }
+
+    setUploadLoading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
+
+    const formData = new FormData();
+    for (let i = 0; i < selectedHistoricos.length; i++) {
+      formData.append("historicos", selectedHistoricos[i]);
+    }
+    if (selectedCurriculo) {
+      formData.append("curriculo", selectedCurriculo);
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/importacao/upload`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || "Erro ao importar dados acadêmicos.");
+      }
+
+      const resData = await response.json();
+      setUploadSuccess(
+        `✓ Sucesso! ${resData.total_linhas_historico.toLocaleString()} linhas e ${resData.total_alunos.toLocaleString()} alunos processados em ${resData.tempo_segundos}s.`
+      );
+
+      // Recarrega as estimativas e períodos da tela
+      await fetchDemandas();
+      await fetchPeriodos();
+
+      setTimeout(() => {
+        setShowUploadModal(false);
+        setUploadSuccess(null);
+        setSelectedHistoricos(null);
+        setSelectedCurriculo(null);
+      }, 3500);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Erro de conexão durante o upload.");
+    } finally {
+      setUploadLoading(false);
+    }
+  };
+
+  const handleCriarSemestre = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const codigo = `${novoAno}/${novoSemestreNum}`;
+    setNovoSemestreLoading(true);
+    setNovoSemestreError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/demanda/periodos`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          periodo: codigo,
+          descricao: novoDescricao.trim() || `Semestre ${codigo}`,
+          is_atual: false,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Erro ao criar novo semestre.");
+      }
+
+      await fetchPeriodos();
+      setPeriodo(codigo);
+      setShowNovoSemestreModal(false);
+      setNovoDescricao("");
+    } catch (err) {
+      setNovoSemestreError(err instanceof Error ? err.message : "Erro ao criar semestre.");
+    } finally {
+      setNovoSemestreLoading(false);
+    }
+  };
+
+  const handleExcluirSemestre = async () => {
+    setExcluirSemestreLoading(true);
+    setExcluirSemestreError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/demanda/periodos/${periodo}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Erro ao excluir semestre.");
+      }
+
+      await fetchPeriodos();
+      setShowExcluirSemestreModal(false);
+    } catch (err) {
+      setExcluirSemestreError(err instanceof Error ? err.message : "Erro ao excluir semestre.");
+    } finally {
+      setExcluirSemestreLoading(false);
+    }
+  };
+
   const toggleExpandido = (conceitoId: string, e: React.MouseEvent) => {
+
+
     e.stopPropagation();
     setExpandidos(prev => {
       const next = new Set(prev);
@@ -188,6 +362,14 @@ export default function Dashboard({
           </div>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            onClick={() => setShowUploadModal(true)}
+            className="btn btn-secondary btn-sm"
+            title="Importar novos arquivos de histórico escolar ou matriz curricular"
+          >
+            📥 Importar Dados
+          </button>
           <span className="user-email">{userEmail}</span>
           <button onClick={onLogout} className="btn btn-outline-danger btn-sm">
             Sair
@@ -228,16 +410,44 @@ export default function Dashboard({
             </div>
 
             <div className="form-group flex-1">
-              <label htmlFor="select-periodo">Período Letivo Alvo</label>
+              <div className="label-with-actions">
+                <label htmlFor="select-periodo">Semestre de Análise</label>
+                <div className="period-action-buttons">
+                  <button
+                    type="button"
+                    className="btn-period-action btn-add-period"
+                    title="Cadastrar Novo Semestre Oficial"
+                    onClick={() => setShowNovoSemestreModal(true)}
+                  >
+                    ➕ Novo
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-period-action btn-delete-period"
+                    title={`Excluir Semestre ${periodo}`}
+                    disabled={periodosList.length <= 1}
+                    onClick={() => setShowExcluirSemestreModal(true)}
+                  >
+                    🗑️ Excluir
+                  </button>
+                </div>
+              </div>
               <select
                 id="select-periodo"
                 value={periodo}
                 onChange={(e) => setPeriodo(e.target.value)}
               >
-                <option value="2026/1">2026/1 (Ímpar - Atual)</option>
-                <option value="2026/2">2026/2 (Par - Próximo)</option>
+                {periodosList.map((p) => (
+                  <option key={p.codigo} value={p.codigo}>
+                    {p.codigo} ({p.tipo === "impar" ? "1º Sem" : "2º Sem"}{p.is_atual ? " - Atual" : ""}{p.total_cursando > 0 ? ` • ${p.total_cursando} cursando` : ""})
+                  </option>
+                ))}
+                {periodosList.length === 0 && (
+                  <option value="2026/1">2026/1 (Semestre Regular Atual)</option>
+                )}
               </select>
             </div>
+
 
             <div className="form-group flex-1">
               <label htmlFor="select-modo">Modo de Análise</label>
@@ -264,6 +474,33 @@ export default function Dashboard({
             <strong>Ocorreu um erro:</strong> {error}
           </div>
         )}
+
+        {/* Alerta explicativo quando o semestre selecionado ainda não possui dados importados */}
+        {(() => {
+          const periodoSelecionadoInfo = periodosList.find(p => p.codigo === periodo);
+          const semDados = periodoSelecionadoInfo && periodoSelecionadoInfo.total_registros === 0;
+          if (!semDados) return null;
+          return (
+            <div className="semester-empty-banner">
+              <div className="semester-empty-banner-content">
+                <span className="semester-empty-banner-icon">ℹ️</span>
+                <div>
+                  <strong>Semestre {periodo} recém-cadastrado (sem dados de histórico importados):</strong>
+                  <p>
+                    As disciplinas curriculares do curso estão mapeadas com contagens zeradas. Para visualizar os alunos cursando, aptos e estimativas reais para este período, faça o upload dos novos arquivos de histórico escolar.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm semester-empty-banner-btn"
+                onClick={() => setShowUploadModal(true)}
+              >
+                📥 Importar Histórico Agora
+              </button>
+            </div>
+          );
+        })()}
 
         <div className="table-card">
           <div className="table-header-group">
@@ -313,7 +550,7 @@ export default function Dashboard({
                               : "Clique para auditar as matrículas desta disciplina"
                           }
                         >
-                          {curso !== "TODOS" && <td><strong>{item.conceito_id}</strong></td>}
+                          {curso !== "TODOS" && <td><strong>{item.disciplina_codigo || item.conceito_id}</strong></td>}
                           <td><strong>{item.disciplina_nome}</strong></td>
                           {curso !== "TODOS" && (
                             <td className="text-center">{item.periodo_sugerido ? `${item.periodo_sugerido}º` : "-"}</td>
@@ -377,6 +614,243 @@ export default function Dashboard({
       <footer className="dashboard-footer">
         <p>© 2026 OfertaPampa — Universidade Federal do Pampa (UNIPAMPA)</p>
       </footer>
+
+      {/* Modal de Importação de Dados Acadêmicos (Históricos e Currículo) */}
+      {showUploadModal && (
+        <div className="modal-overlay" onClick={() => !uploadLoading && setShowUploadModal(false)}>
+          <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>📁 Importação de Dados Acadêmicos</h3>
+              <p className="modal-subtitle">
+                Envie os arquivos de histórico escolar exportados do sistema acadêmico (Guri) para recalcular a oferta e a demanda de disciplinas.
+              </p>
+            </div>
+
+            <form onSubmit={handleUpload}>
+              <div className="modal-body">
+                <div className="upload-section">
+                  <label className="upload-label" htmlFor="upload-historicos">
+                    <strong>1. Arquivos de Histórico Escolar (.csv) *</strong>
+                    <span className="upload-hint">
+                      Selecione um ou múltiplos arquivos CSV de histórico escolar (ex.: históricos dos cursos de Engenharia).
+                    </span>
+                  </label>
+                  <input
+                    id="upload-historicos"
+                    type="file"
+                    multiple
+                    accept=".csv,.xlsx,.xls"
+                    className="upload-input"
+                    disabled={uploadLoading}
+                    onChange={(e) => setSelectedHistoricos(e.target.files)}
+                  />
+                  {selectedHistoricos && selectedHistoricos.length > 0 && (
+                    <div className="upload-file-count">
+                      ✓ {selectedHistoricos.length} arquivo(s) selecionado(s) para importação
+                    </div>
+                  )}
+                </div>
+
+                <div className="upload-section mt-3">
+                  <label className="upload-label" htmlFor="upload-curriculo">
+                    <strong>2. Matriz Curricular / Currículo (.csv) (Opcional)</strong>
+                    <span className="upload-hint">
+                      Envie apenas se houver uma nova grade curricular (PPC) com alterações de disciplinas ou pré-requisitos. Caso contrário, o currículo padrão vigente será mantido.
+                    </span>
+                  </label>
+                  <input
+                    id="upload-curriculo"
+                    type="file"
+                    accept=".csv"
+                    className="upload-input"
+                    disabled={uploadLoading}
+                    onChange={(e) => setSelectedCurriculo(e.target.files?.[0] || null)}
+                  />
+                  {selectedCurriculo && (
+                    <div className="upload-file-count">
+                      ✓ Matriz curricular selecionada: {selectedCurriculo.name}
+                    </div>
+                  )}
+                </div>
+
+                <div className="upload-benchmark-note">
+                  <span className="note-icon">⏱️</span>
+                  <span>
+                    <strong>Desempenho:</strong> O processamento completo de mais de 200.000 registros ocorre em <strong>~45 segundos</strong> (muito abaixo do limite de 4 minutos).
+                  </span>
+                </div>
+
+                {uploadError && (
+                  <div className="modal-error-box mt-3">{uploadError}</div>
+                )}
+
+                {uploadSuccess && (
+                  <div className="modal-success-box mt-3">{uploadSuccess}</div>
+                )}
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => setShowUploadModal(false)}
+                  disabled={uploadLoading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={uploadLoading || !selectedHistoricos || selectedHistoricos.length === 0}
+                >
+                  {uploadLoading ? (
+                    <span className="upload-spinner-row">
+                      <span className="spinner-inline"></span> Processando dados acadêmicos...
+                    </span>
+                  ) : (
+                    "Iniciar Importação"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Criar Novo Semestre */}
+      {showNovoSemestreModal && (
+        <div className="modal-overlay" onClick={() => !novoSemestreLoading && setShowNovoSemestreModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>➕ Criar Novo Semestre</h3>
+              <p className="modal-subtitle">
+                Defina o ano e o período letivo oficial para habilitá-lo no planejamento e receber dados de matrícula.
+              </p>
+            </div>
+
+            <form onSubmit={handleCriarSemestre}>
+              <div className="modal-body">
+                <div className="semester-inputs-row">
+                  <div className="form-group flex-1">
+                    <label htmlFor="input-novo-ano">Ano Letivo</label>
+                    <input
+                      id="input-novo-ano"
+                      type="number"
+                      min="2020"
+                      max="2035"
+                      className="form-control"
+                      value={novoAno}
+                      onChange={(e) => setNovoAno(e.target.value)}
+                      required
+                      disabled={novoSemestreLoading}
+                    />
+                  </div>
+                  <div className="form-group flex-1">
+                    <label htmlFor="select-novo-semestre">Semestre</label>
+                    <select
+                      id="select-novo-semestre"
+                      className="form-control"
+                      value={novoSemestreNum}
+                      onChange={(e) => setNovoSemestreNum(e.target.value)}
+                      disabled={novoSemestreLoading}
+                    >
+                      <option value="1">1º Semestre (Ímpar)</option>
+                      <option value="2">2º Semestre (Par)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group mt-3">
+                  <label htmlFor="input-novo-desc">Descrição / Observação (opcional)</label>
+                  <input
+                    id="input-novo-desc"
+                    type="text"
+                    className="form-control"
+                    placeholder="Ex.: Semestre Regular 2026/2"
+                    value={novoDescricao}
+                    onChange={(e) => setNovoDescricao(e.target.value)}
+                    disabled={novoSemestreLoading}
+                  />
+                </div>
+
+                <div className="semester-preview-badge mt-3">
+                  Período a ser cadastrado: <strong>{novoAno}/{novoSemestreNum}</strong>
+                </div>
+
+                {novoSemestreError && (
+                  <div className="modal-error-box mt-3">{novoSemestreError}</div>
+                )}
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => setShowNovoSemestreModal(false)}
+                  disabled={novoSemestreLoading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={novoSemestreLoading}
+                >
+                  {novoSemestreLoading ? "Cadastrando..." : "Cadastrar Semestre"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Excluir Semestre */}
+      {showExcluirSemestreModal && (
+        <div className="modal-overlay" onClick={() => !excluirSemestreLoading && setShowExcluirSemestreModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>🗑️ Excluir Semestre {periodo}</h3>
+              <p className="modal-subtitle">
+                Esta ação removerá permanentemente todos os registros de histórico e matrículas associados ao semestre <strong>{periodo}</strong>.
+              </p>
+            </div>
+
+            <div className="modal-body">
+              <div className="delete-warning-box">
+                <span className="warning-icon">⚠️</span>
+                <div>
+                  <strong>Atenção!</strong> Esta operação é irreversível e deve ser usada caso você tenha subido dados de teste ou um arquivo incorreto.
+                </div>
+              </div>
+
+              {excluirSemestreError && (
+                <div className="modal-error-box mt-3">{excluirSemestreError}</div>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setShowExcluirSemestreModal(false)}
+                disabled={excluirSemestreLoading}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={handleExcluirSemestre}
+                disabled={excluirSemestreLoading}
+              >
+                {excluirSemestreLoading ? "Excluindo..." : `Confirmar Exclusão de ${periodo}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+

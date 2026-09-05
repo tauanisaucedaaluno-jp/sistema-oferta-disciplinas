@@ -36,6 +36,9 @@ def health_check():
 
 from api.auth import router as auth_router
 from api.demanda import router as demanda_router
+from api.importacao import router as importacao_router
 
 app.include_router(auth_router, prefix="/auth", tags=["autenticação"])
 app.include_router(demanda_router, prefix="/demanda", tags=["demanda"])
+app.include_router(importacao_router, prefix="/importacao", tags=["importação"])
+

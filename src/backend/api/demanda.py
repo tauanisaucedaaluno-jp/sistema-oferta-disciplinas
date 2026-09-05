@@ -1,17 +1,76 @@
 import csv
 import io
 from collections import defaultdict
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from db.database import get_db
-from db.models import Curso, VinculoCurricular, ConceitoDisciplina, Usuario
+from db.models import (
+    Curso,
+    VinculoCurricular,
+    ConceitoDisciplina,
+    CodigoDisciplina,
+    Usuario,
+    Historico,
+    PeriodoLetivo,
+)
 from api.auth import obter_usuario_atual
 from api.deps import registrar_acesso
-from core.groups import grupo_a, grupo_b, grupo_c
+
+from core.groups import (
+    grupo_a,
+    grupo_b,
+    grupo_c,
+    _formatos_periodo,
+    _obter_nome_normalizado,
+    _obter_codigos_disciplina,
+)
 
 router = APIRouter()
+
+
+def _obter_codigo_disciplina(db: Session, curso_codigo: str, conceito_id: str) -> str:
+    """Busca o código oficial vigente da disciplina no PPC (ex.: AL0362)."""
+    cods = (
+        db.query(CodigoDisciplina)
+        .filter(
+            CodigoDisciplina.curso_codigo == curso_codigo,
+            CodigoDisciplina.conceito_id == conceito_id,
+        )
+        .all()
+    )
+    if not cods:
+        return conceito_id
+
+    def prioridade(r):
+        sit_score = 2 if r.situacao_curriculo == "CORRENTE" else (1 if r.situacao_curriculo in ("ATIVO", "ATIVA") else 0)
+        versao = r.versao_ppc_origem or 0
+        return (sit_score, versao)
+
+    cod_escolhido = max(cods, key=prioridade)
+    return cod_escolhido.codigo
+
+
+def _mapear_codigos_disciplina(db: Session, curso_codigo: str = None) -> dict:
+    """Retorna um mapeamento (curso_codigo, conceito_id) -> codigo_oficial."""
+    query = db.query(CodigoDisciplina)
+    if curso_codigo and curso_codigo != "TODOS":
+        query = query.filter(CodigoDisciplina.curso_codigo == curso_codigo)
+
+    registros = query.all()
+
+    def prioridade(r):
+        sit_score = 2 if r.situacao_curriculo == "CORRENTE" else (1 if r.situacao_curriculo in ("ATIVO", "ATIVA") else 0)
+        versao = r.versao_ppc_origem or 0
+        return (sit_score, versao)
+
+    mapa = {}
+    for r in sorted(registros, key=prioridade):
+        mapa[(r.curso_codigo, r.conceito_id)] = r.codigo
+    return mapa
 
 
 @router.get("/cursos")
@@ -28,8 +87,212 @@ def listar_cursos(
     return [{"codigo": c.codigo, "nome": c.nome} for c in cursos]
 
 
+class CriarPeriodoRequest(BaseModel):
+    periodo: str
+    descricao: str = ""
+    is_atual: bool = False
+
+
+@router.get("/periodos")
+def listar_periodos(
+    db: Session = Depends(get_db),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Retorna a lista dinâmica de períodos letivos disponíveis no banco de dados,
+    ordenados decrescente pelo ano e semestre, com contagem de matrículas.
+    """
+    import re
+    # 1. Busca períodos explícitos cadastrados em PeriodoLetivo
+    periodos_db = db.query(PeriodoLetivo).all()
+    if not periodos_db:
+        # Garante o período base padrão (2026/1) caso o banco seja novo
+        p_padrao = PeriodoLetivo(codigo="2026/1", ano=2026, semestre=1, descricao="2026/1", is_atual=True)
+        db.add(p_padrao)
+        db.commit()
+        periodos_db = [p_padrao]
+
+    periodos_cadastrados = {p.codigo: p for p in periodos_db}
+
+    # 2. Busca contagens por período no Histórico (apenas para alimentar os períodos cadastrados)
+    formatos_alvo = []
+    for cod in periodos_cadastrados.keys():
+        formatos_alvo.extend(_formatos_periodo(cod))
+
+    stats = (
+        db.query(
+            Historico.periodo_letivo,
+            func.count(Historico.id),
+            func.sum(case((Historico.situacao == "cursando", 1), else_=0)),
+        )
+        .filter(Historico.periodo_letivo.in_(formatos_alvo))
+        .group_by(Historico.periodo_letivo)
+        .all()
+    )
+    stats_map = {r[0]: (r[1], int(r[2] or 0)) for r in stats}
+
+    def parse_periodo(p_str: str):
+        match = re.match(r"^(\d{4})[./\-]0?([12])$", p_str.strip())
+        if match:
+            return (int(match.group(1)), int(match.group(2)))
+        return (0, 0)
+
+    # Exclusivamente os períodos cadastrados em PeriodoLetivo
+    codigos_validos = list(periodos_cadastrados.keys())
+    codigos_validos.sort(key=parse_periodo, reverse=True)
+
+    resultado = []
+    for c in codigos_validos:
+        tot, curs = stats_map.get(c, (0, 0))
+        # Também verifica formatos equivalentes se houver
+        if tot == 0:
+            for fmt in _formatos_periodo(c):
+                if fmt in stats_map:
+                    t_f, c_f = stats_map[fmt]
+                    tot += t_f
+                    curs += c_f
+
+        ano, sem = parse_periodo(c)
+        p_obj = periodos_cadastrados.get(c)
+        is_atual = p_obj.is_atual if p_obj else False
+        tipo = "impar" if sem == 1 else "par"
+
+        resultado.append({
+            "codigo": c,
+            "ano": ano,
+            "semestre": sem,
+            "tipo": tipo,
+            "descricao": p_obj.descricao if (p_obj and p_obj.descricao) else f"{ano}/{sem}",
+            "total_registros": tot,
+            "total_cursando": curs,
+            "is_atual": is_atual,
+        })
+
+    return resultado
+
+
+@router.post("/periodos")
+def criar_periodo(
+    req: CriarPeriodoRequest,
+    db: Session = Depends(get_db),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Cria ou habilita oficialmente um novo semestre letivo para o sistema (ex.: '2026/2').
+    """
+    import re
+    p_clean = req.periodo.strip()
+    match = re.match(r"^(\d{4})[./\-]0?([12])$", p_clean)
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de período inválido. Use o padrão AAAA/1 ou AAAA/2 (ex.: 2026/2).",
+        )
+    ano = int(match.group(1))
+    semestre = int(match.group(2))
+    codigo_canonico = f"{ano}/{semestre}"
+
+    if req.is_atual:
+        db.query(PeriodoLetivo).filter(PeriodoLetivo.is_atual == True).update({"is_atual": False})
+
+    existente = db.query(PeriodoLetivo).filter(PeriodoLetivo.codigo == codigo_canonico).first()
+    if existente:
+        existente.descricao = req.descricao or existente.descricao
+        existente.is_atual = req.is_atual
+    else:
+        novo = PeriodoLetivo(
+            codigo=codigo_canonico,
+            ano=ano,
+            semestre=semestre,
+            descricao=req.descricao or f"{ano}/{semestre}",
+            is_atual=req.is_atual,
+        )
+        db.add(novo)
+
+    db.commit()
+
+    usr_id = usuario_atual.id if usuario_atual else None
+    registrar_acesso(
+        db,
+        "criacao_periodo_letivo",
+        f"Período: {codigo_canonico}, Descrição: {req.descricao}, Atual: {req.is_atual}",
+        usr_id,
+    )
+
+    return {
+        "status": "sucesso",
+        "codigo": codigo_canonico,
+        "ano": ano,
+        "semestre": semestre,
+        "mensagem": f"Semestre {codigo_canonico} cadastrado com sucesso.",
+    }
+
+
+@router.delete("/periodos/{periodo:path}")
+def excluir_periodo(
+    periodo: str,
+    db: Session = Depends(get_db),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Exclui um semestre letivo e todos os registros de histórico associados a ele.
+    Permite à coordenação remover uploads errados, períodos de teste ou resíduos.
+    """
+    p_clean = periodo.strip().replace("-", "/")
+    formatos = _formatos_periodo(p_clean)
+
+    # 1. Deleta registros de Historico do período
+    linhas_historico = db.query(Historico).filter(Historico.periodo_letivo.in_(formatos)).delete(synchronize_session=False)
+
+    # 2. Deleta registro de PeriodoLetivo
+    db.query(PeriodoLetivo).filter(PeriodoLetivo.codigo.in_(formatos)).delete(synchronize_session=False)
+
+    db.commit()
+
+    usr_id = usuario_atual.id if usuario_atual else None
+    registrar_acesso(
+        db,
+        "exclusao_periodo_letivo",
+        f"Período: {p_clean}, Linhas de histórico removidas: {linhas_historico}",
+        usr_id,
+    )
+
+    return {
+        "status": "sucesso",
+        "periodo": p_clean,
+        "linhas_removidas": linhas_historico,
+        "mensagem": f"Semestre {p_clean} excluído com sucesso ({linhas_historico} registros removidos).",
+    }
+
+
+def _periodo_possui_dados(db: Session, periodo_atual: str, context_cache: dict = None) -> bool:
+    """Verifica se existem registros em Historico para o período solicitado."""
+    if context_cache is not None:
+        if "tem_dados_periodo" in context_cache:
+            return context_cache["tem_dados_periodo"]
+    
+    formatos = _formatos_periodo(periodo_atual)
+    existe = db.query(Historico.id).filter(Historico.periodo_letivo.in_(formatos)).first() is not None
+    if context_cache is not None:
+        context_cache["tem_dados_periodo"] = existe
+    return existe
+
+
 def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str, context_cache: dict = None) -> dict:
     """Calcula A, B, C e demanda estimada para um par (curso, conceito)."""
+    # Se o período é novo e ainda não possui registros no histórico, retorna contagens zeradas
+    if not _periodo_possui_dados(db, periodo_atual, context_cache):
+        return {
+            "curso_codigo": curso_codigo,
+            "grupo_a_qtd": 0,
+            "grupo_a_prob": 0.0,
+            "grupo_b_qtd": 0,
+            "grupo_c_qtd": 0,
+            "grupo_c_prob": 0.0,
+            "demanda_estimada": 0.0,
+            "total_alunos": 0,
+        }
+
     ga = grupo_a(db, curso_codigo, conceito_id, periodo_atual, context_cache)
     gb = grupo_b(db, curso_codigo, conceito_id, context_cache)
     gc = grupo_c(db, curso_codigo, conceito_id, periodo_atual, context_cache)
@@ -109,6 +372,7 @@ def obter_demandas(
         )
 
     vinculos = _filtrar_vinculos_por_modo(list(vinculos_query), modo, periodo_atual)
+    mapa_codigos = _mapear_codigos_disciplina(db, curso_codigo)
 
     context_cache = {}
     resultado = []
@@ -118,9 +382,12 @@ def obter_demandas(
             continue
 
         dados_curso = _calcular_demanda_por_vinculo(db, curso_codigo, vinc.conceito_id, periodo_atual, context_cache)
+        cod_oficial = mapa_codigos.get((curso_codigo, vinc.conceito_id), vinc.conceito_id)
+        dados_curso["disciplina_codigo"] = cod_oficial
 
         resultado.append({
             "conceito_id": vinc.conceito_id,
+            "disciplina_codigo": cod_oficial,
             "disciplina_nome": conceito.nome_normalizado,
             "periodo_sugerido": vinc.periodo_sugerido,
             "periodicidade_oferta": vinc.periodicidade_oferta,
@@ -158,6 +425,8 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
         periodo_atual,
     )
 
+    mapa_codigos = _mapear_codigos_disciplina(db)
+
     # Agrupa por nome_normalizado (disciplinas "iguais" em cursos diferentes)
     # Estrutura: {nome_normalizado: [(vinculo, conceito), ...]}
     grupos_por_nome: dict = defaultdict(list)
@@ -183,6 +452,7 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
 
         for vinc, conceito in pares:
             dados = _calcular_demanda_por_vinculo(db, vinc.curso_codigo, vinc.conceito_id, periodo_atual, context_cache)
+            dados["disciplina_codigo"] = mapa_codigos.get((vinc.curso_codigo, vinc.conceito_id), vinc.conceito_id)
             demanda_por_curso.append(dados)
             total_a_qtd += dados["grupo_a_qtd"]
             total_a_prob += dados["grupo_a_prob"]
@@ -192,10 +462,12 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
             total_alunos += dados["total_alunos"]
 
         demanda_total = round(total_a_prob + total_b + total_c_prob, 2)
+        cod_ref = mapa_codigos.get((vinc_ref.curso_codigo, conceito_ref.id), conceito_ref.id)
 
         resultado.append({
             # Usa conceito_id do primeiro curso como referência; demanda_por_curso tem todos
             "conceito_id": conceito_ref.id,
+            "disciplina_codigo": cod_ref,
             "disciplina_nome": nome_normalizado,
             "periodo_sugerido": periodo_sugerido,
             "periodicidade_oferta": periodicidade_oferta,
@@ -249,15 +521,26 @@ def obter_detalhe_demanda(
         VinculoCurricular.conceito_id == conceito_id_efetivo,
     ).first()
 
-    ga = grupo_a(db, curso_codigo, conceito_id_efetivo, periodo_atual)
-    gb = grupo_b(db, curso_codigo, conceito_id_efetivo)
-    gc = grupo_c(db, curso_codigo, conceito_id_efetivo, periodo_atual)
-    prob_a = sum(aluno.probabilidade_reprovacao for aluno in ga)
-    prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
-    total = prob_a + len(gb) + prob_c
+    cod_oficial = _obter_codigo_disciplina(db, curso_codigo, conceito_id_efetivo)
+
+    if not _periodo_possui_dados(db, periodo_atual):
+        ga = []
+        gb = []
+        gc = []
+        prob_a = 0.0
+        prob_c = 0.0
+        total = 0.0
+    else:
+        ga = grupo_a(db, curso_codigo, conceito_id_efetivo, periodo_atual)
+        gb = grupo_b(db, curso_codigo, conceito_id_efetivo)
+        gc = grupo_c(db, curso_codigo, conceito_id_efetivo, periodo_atual)
+        prob_a = sum(aluno.probabilidade_reprovacao for aluno in ga)
+        prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
+        total = prob_a + len(gb) + prob_c
 
     return {
         "conceito_id": conceito_id_efetivo,
+        "disciplina_codigo": cod_oficial,
         "disciplina_nome": conceito_alvo.nome_normalizado,
         "curso_codigo": curso_codigo,
         "curso_nome": curso.nome if curso else curso_codigo,
@@ -307,14 +590,18 @@ def exportar_demandas_csv(
             )
 
         vinculos = _filtrar_vinculos_por_modo(list(vinculos_query), modo, periodo_atual)
+        mapa_codigos = _mapear_codigos_disciplina(db, curso_codigo)
         demandas = []
         for vinc in vinculos:
             conceito = db.query(ConceitoDisciplina).filter(ConceitoDisciplina.id == vinc.conceito_id).first()
             if not conceito:
                 continue
             dados = _calcular_demanda_por_vinculo(db, curso_codigo, vinc.conceito_id, periodo_atual)
+            cod_oficial = mapa_codigos.get((curso_codigo, vinc.conceito_id), vinc.conceito_id)
+            dados["disciplina_codigo"] = cod_oficial
             demandas.append({
                 "conceito_id": vinc.conceito_id,
+                "disciplina_codigo": cod_oficial,
                 "disciplina_nome": conceito.nome_normalizado,
                 "periodo_sugerido": vinc.periodo_sugerido,
                 **dados,
@@ -333,8 +620,9 @@ def exportar_demandas_csv(
 
     for item in demandas:
         for dpc in item.get("demanda_por_curso", []):
+            cod_disc = dpc.get("disciplina_codigo") or item.get("disciplina_codigo") or item["conceito_id"]
             writer.writerow([
-                item["conceito_id"],
+                cod_disc,
                 item["disciplina_nome"],
                 item.get("periodo_sugerido") or "-",
                 dpc["curso_codigo"],
@@ -356,3 +644,73 @@ def exportar_demandas_csv(
             "Content-Encoding": "utf-8"
         }
     )
+
+
+class RemoverMatriculaRequest(BaseModel):
+    matricula: str
+    curso_codigo: str
+    conceito_id: str
+    periodo_atual: str
+    justificativa: str = ""
+
+
+@router.post("/remover-matricula")
+def remover_matricula_cursando(
+    req: RemoverMatriculaRequest,
+    db: Session = Depends(get_db),
+    usuario_atual: Usuario = Depends(obter_usuario_atual),
+):
+    """
+    Permite à coordenação remover a matrícula de um aluno que está cursando (Grupo A),
+    por motivo de desistência, cancelamento ou trancamento conhecido fora dos relatórios.
+    """
+    nome_alvo = _obter_nome_normalizado(db, req.conceito_id)
+    if not nome_alvo:
+        conceito = db.query(ConceitoDisciplina).filter(ConceitoDisciplina.id == req.conceito_id).first()
+        nome_alvo = conceito.nome_normalizado if conceito else None
+
+    cods = _obter_codigos_disciplina(db, req.curso_codigo, nome_alvo) if nome_alvo else []
+    if not cods:
+        cods_direto = [r[0] for r in db.query(CodigoDisciplina.codigo).filter(
+            CodigoDisciplina.curso_codigo == req.curso_codigo,
+            CodigoDisciplina.conceito_id == req.conceito_id,
+        ).all()]
+        cods = cods_direto or [req.conceito_id]
+
+    formatos = _formatos_periodo(req.periodo_atual)
+
+    # Busca o registro em historico com situacao 'cursando'
+    registros = db.query(Historico).filter(
+        Historico.aluno_matricula == req.matricula,
+        Historico.curso_codigo == req.curso_codigo,
+        Historico.disciplina_codigo.in_(cods),
+        Historico.situacao == "cursando",
+        Historico.periodo_letivo.in_(formatos),
+    ).all()
+
+    if not registros:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Nenhum registro de matrícula 'cursando' encontrado para o aluno {req.matricula} nesta disciplina no período {req.periodo_atual}.",
+        )
+
+    for reg in registros:
+        reg.situacao = "trancado"
+        motivo = req.justificativa.strip() if req.justificativa else "Desistência / Trancamento informado pela coordenação"
+        reg.situacao_matricula = f"Removido pela coordenação: {motivo}"
+
+    db.commit()
+
+    usr_id = usuario_atual.id if usuario_atual else None
+    registrar_acesso(
+        db,
+        "remocao_matricula_cursando",
+        f"Matrícula: {req.matricula}, Curso: {req.curso_codigo}, Conceito: {req.conceito_id}, Período: {req.periodo_atual}, Motivo: {req.justificativa}",
+        usr_id,
+    )
+
+    return {
+        "status": "ok",
+        "message": f"Matrícula {req.matricula} removida com sucesso da disciplina no período {req.periodo_atual}.",
+    }
+

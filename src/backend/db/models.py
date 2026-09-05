@@ -207,3 +207,20 @@ class LogAcesso(Base):
     acao = Column(String, nullable=False)  # ex.: "login", "login_falho", "consulta_demanda"
     detalhe = Column(String, nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PeriodoLetivo(Base):
+    """
+    Registro explícito de períodos letivos gerenciados pela coordenação (ex.: 2026/1, 2026/2).
+    Permite criar novos semestres e gerenciar o ciclo de planejamento e exclusão.
+    """
+
+    __tablename__ = "periodo_letivo"
+
+    codigo = Column(String, primary_key=True)  # ex.: "2026/1"
+    ano = Column(Integer, nullable=False)
+    semestre = Column(Integer, nullable=False)  # 1 ou 2
+    descricao = Column(String, nullable=True)
+    is_atual = Column(Boolean, default=False, nullable=False)
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+

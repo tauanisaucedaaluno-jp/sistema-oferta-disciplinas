@@ -298,3 +298,37 @@ def test_demanda_estimada(db):
     # Grupo C = 0.6667 (aluno3 cursando FIS001, prob_aprov 2/3 = 0.6667 considerando h_ant_1, h_ant_2 e h2)
     # Total = 0.75 + 1.0 + 0.6667 = 2.4167
     assert round(demanda, 4) == 2.4167
+
+
+def test_remover_matricula_cursando(db):
+    from api.demanda import remover_matricula_cursando, RemoverMatriculaRequest
+    from db.models import Usuario
+
+    calc1 = ConceitoDisciplina(id="CC-CALC1", curso_codigo="CC", nome_normalizado="CALCULO I")
+    cod_calc1 = CodigoDisciplina(codigo="AL0001", curso_codigo="CC", conceito_id="CC-CALC1")
+    aluno1 = Aluno(matricula="1001", curso_codigo="CC")
+    hist1 = Historico(aluno_matricula="1001", curso_codigo="CC", disciplina_codigo="AL0001", periodo_letivo="2026/1", situacao="cursando")
+    user = Usuario(email="coord@unipampa.edu.br", senha_hash="hash", papel="coordenador", ativo=True)
+    db.add_all([calc1, cod_calc1, aluno1, hist1, user])
+    db.commit()
+
+    # Antes: Aluno está no Grupo A
+    ga_antes = grupo_a(db, "CC", "CC-CALC1", "2026/1")
+    assert len(ga_antes) == 1
+    assert ga_antes[0].matricula == "1001"
+
+    # Ação: Coordenadora remove matrícula
+    req = RemoverMatriculaRequest(
+        matricula="1001",
+        curso_codigo="CC",
+        conceito_id="CC-CALC1",
+        periodo_atual="2026/1",
+        justificativa="Aluno informou trancamento"
+    )
+    res = remover_matricula_cursando(req, db=db, usuario_atual=user)
+    assert res["status"] == "ok"
+
+    # Depois: Aluno NÃO está mais no Grupo A
+    ga_depois = grupo_a(db, "CC", "CC-CALC1", "2026/1")
+    assert len(ga_depois) == 0
+

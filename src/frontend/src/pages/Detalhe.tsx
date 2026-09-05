@@ -10,6 +10,7 @@ interface AlunoComProbabilidade {
 
 interface DetalheDemanda {
   conceito_id: string;
+  disciplina_codigo?: string;
   disciplina_nome: string;
   curso_codigo: string;
   curso_nome: string;
@@ -53,37 +54,93 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"A" | "B" | "C">("A");
 
-  useEffect(() => {
-    const fetchDetalhe = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(
-          `${API_BASE}/demanda/detalhe?curso_codigo=${cursoCodigo}&conceito_id=${conceitoId}&periodo_atual=${periodo}`,
-          {
-            method: "GET",
-            headers: {
-              "Authorization": `Bearer ${token}`,
-            },
-          }
-        );
+  // Estados para modal de remoção de matrícula
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [matriculaToDelete, setMatriculaToDelete] = useState<string | null>(null);
+  const [justificativa, setJustificativa] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.detail || "Erro ao carregar o detalhamento da disciplina.");
+  const fetchDetalhe = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE}/demanda/detalhe?curso_codigo=${cursoCodigo}&conceito_id=${conceitoId}&periodo_atual=${periodo}`,
+        {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+          },
         }
+      );
 
-        const data = await response.json();
-        setDetalhe(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Erro de conexão com o servidor.");
-      } finally {
-        setLoading(false);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || "Erro ao carregar o detalhamento da disciplina.");
       }
-    };
 
+      const data = await response.json();
+      setDetalhe(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro de conexão com o servidor.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchDetalhe();
   }, [cursoCodigo, conceitoId, periodo, token]);
+
+  const handleOpenDeleteModal = (matricula: string) => {
+    setMatriculaToDelete(matricula);
+    setJustificativa("");
+    setDeleteError(null);
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!matriculaToDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const response = await fetch(`${API_BASE}/demanda/remover-matricula`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          matricula: matriculaToDelete,
+          curso_codigo: cursoCodigo,
+          conceito_id: conceitoId,
+          periodo_atual: periodo,
+          justificativa: justificativa.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || "Erro ao remover matrícula.");
+      }
+
+      const matRemovida = matriculaToDelete;
+      setShowDeleteModal(false);
+      setMatriculaToDelete(null);
+      setJustificativa("");
+      setToastMessage(`Matrícula ${matRemovida} removida com sucesso!`);
+      setTimeout(() => setToastMessage(null), 4000);
+
+      // Atualiza a visualização com os dados recalculados
+      await fetchDetalhe();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Erro ao remover matrícula.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const listA = Array.isArray(detalhe?.grupo_a) ? detalhe!.grupo_a : [];
   const listB = Array.isArray(detalhe?.grupo_b) ? detalhe!.grupo_b : [];
@@ -129,7 +186,7 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
           <div className="detail-hero-card">
             <div className="detail-info">
               <div className="detail-badges-row">
-                <span className="concept-id-badge">{detalhe.conceito_id}</span>
+                <span className="concept-id-badge">{detalhe.disciplina_codigo || detalhe.conceito_id}</span>
                 <span className="course-badge">{detalhe.curso_nome} ({detalhe.curso_codigo})</span>
                 {detalhe.periodo_sugerido && (
                   <span className="semester-badge">{detalhe.periodo_sugerido}º Semestre (Grade Ideal)</span>
@@ -193,11 +250,21 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
                       const prob = getProbabilidade(item);
                       return (
                         <li key={`student-a-${mat}-${idx}`} className="student-item">
-                          <span className="student-icon">👤</span>
-                          <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
-                          <span className="student-probability">
-                            Probabilidade de reprovação: <strong>{(prob * 100).toFixed(1)}%</strong>
-                          </span>
+                          <div className="student-item-main">
+                            <span className="student-icon">👤</span>
+                            <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
+                            <span className="student-probability">
+                              Probabilidade de reprovação: <strong>{(prob * 100).toFixed(1)}%</strong>
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn-delete-student"
+                            title={`Remover matrícula ${mat} (desistência / trancamento)`}
+                            onClick={() => handleOpenDeleteModal(mat)}
+                          >
+                            🗑️
+                          </button>
                         </li>
                       );
                     })}
@@ -214,9 +281,11 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
                       const mat = getMatricula(item);
                       return (
                         <li key={`student-b-${mat}-${idx}`} className="student-item">
-                          <span className="student-icon">👤</span>
-                          <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
-                          <span className="student-status eligible">Apto a cursar (Peso 1.0)</span>
+                          <div className="student-item-main">
+                            <span className="student-icon">👤</span>
+                            <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
+                            <span className="student-status eligible">Apto a cursar (Peso 1.0)</span>
+                          </div>
                         </li>
                       );
                     })}
@@ -234,11 +303,13 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
                       const prob = getProbabilidade(item);
                       return (
                         <li key={`student-c-${mat}-${idx}`} className="student-item">
-                          <span className="student-icon">👤</span>
-                          <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
-                          <span className="student-probability">
-                            Probabilidade de aprovação: <strong>{(prob * 100).toFixed(1)}%</strong>
-                          </span>
+                          <div className="student-item-main">
+                            <span className="student-icon">👤</span>
+                            <span className="student-matricula">Matrícula: <strong>{mat}</strong></span>
+                            <span className="student-probability">
+                              Probabilidade de aprovação: <strong>{(prob * 100).toFixed(1)}%</strong>
+                            </span>
+                          </div>
                         </li>
                       );
                     })}
@@ -248,6 +319,76 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
             </div>
           </div>
         </main>
+      )}
+
+      {/* Toast de notificação de sucesso */}
+      {toastMessage && (
+        <div className="toast-notification">
+          <span>✓</span>
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Modal Popup de Confirmação de Remoção de Matrícula */}
+      {showDeleteModal && (
+        <div className="modal-overlay" onClick={() => !isDeleting && setShowDeleteModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>🗑️ Remover Matrícula do Grupo A</h3>
+              <p className="modal-subtitle">
+                Esta ação registrará a desistência ou trancamento do aluno no período analisado, recalculando a demanda da disciplina.
+              </p>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-info-box">
+                <div className="modal-info-row"><strong>Matrícula:</strong> {matriculaToDelete}</div>
+                <div className="modal-info-row">
+                  <strong>Disciplina:</strong> {detalhe?.disciplina_nome} ({detalhe?.disciplina_codigo || detalhe?.conceito_id})
+                </div>
+                <div className="modal-info-row">
+                  <strong>Curso:</strong> {detalhe?.curso_nome} ({detalhe?.curso_codigo})
+                </div>
+                <div className="modal-info-row"><strong>Período Letivo:</strong> {periodo}</div>
+              </div>
+
+              <label htmlFor="modal-justificativa" className="modal-label">
+                Justificativa da Coordenação (opcional):
+              </label>
+              <textarea
+                id="modal-justificativa"
+                className="modal-textarea"
+                placeholder="Ex.: Aluno informou desistência da disciplina ou trancamento de matrícula à coordenação..."
+                value={justificativa}
+                onChange={(e) => setJustificativa(e.target.value)}
+                disabled={isDeleting}
+              />
+
+              {deleteError && (
+                <div className="modal-error-box">{deleteError}</div>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Salvando..." : "Salvar / Confirmar Remoção"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
