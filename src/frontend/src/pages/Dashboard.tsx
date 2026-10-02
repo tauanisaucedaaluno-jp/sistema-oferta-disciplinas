@@ -50,8 +50,12 @@ interface DashboardProps {
   setCurso: (curso: string) => void;
   periodo: string;
   setPeriodo: (periodo: string) => void;
-  modo: string;
-  setModo: (modo: string) => void;
+  demandas: DisciplinaDemand[];
+  setDemandas: React.Dispatch<React.SetStateAction<DisciplinaDemand[]>>;
+  periodosList: PeriodoInfo[];
+  setPeriodosList: React.Dispatch<React.SetStateAction<PeriodoInfo[]>>;
+  cursos: CursoInfo[];
+  setCursos: React.Dispatch<React.SetStateAction<CursoInfo[]>>;
   onLogout: () => void;
   onSelectDisciplina: (conceitoId: string, cursoCodigo: string, periodo: string) => void;
 }
@@ -65,18 +69,22 @@ export default function Dashboard({
   setCurso,
   periodo,
   setPeriodo,
-  modo,
-  setModo,
+  demandas,
+  setDemandas,
+  periodosList,
+  setPeriodosList,
+  cursos,
+  setCursos,
   onLogout,
   onSelectDisciplina,
 }: DashboardProps) {
-  const [demandas, setDemandas] = useState<DisciplinaDemand[]>([]);
-  const [cursos, setCursos] = useState<CursoInfo[]>([]);
-  const [periodosList, setPeriodosList] = useState<PeriodoInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Controla quais linhas têm a quebra por curso expandida
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  // Filtro por tipo de componente curricular (Todas, Obrigatórias, Optativas)
+  const [tipoFiltro, setTipoFiltro] = useState<"todas" | "obrigatorias" | "optativas">("todas");
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   // Estados do Modal de Upload de Históricos / Currículo
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -138,11 +146,13 @@ export default function Dashboard({
 
 
   const fetchDemandas = async () => {
-    setLoading(true);
+    if (demandas.length === 0) {
+      setLoading(true);
+    }
     setError(null);
     setExpandidos(new Set());
     try {
-      const response = await fetch(`${API_BASE}/demanda?curso_codigo=${curso}&periodo_atual=${periodo}&modo=${modo}`, {
+      const response = await fetch(`${API_BASE}/demanda?curso_codigo=${curso}&periodo_atual=${periodo}&modo=regular`, {
         method: "GET",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -169,11 +179,11 @@ export default function Dashboard({
 
   useEffect(() => {
     fetchDemandas();
-  }, [curso, periodo, modo]);
+  }, [curso, periodo]);
 
   const handleExport = async () => {
     try {
-      const response = await fetch(`${API_BASE}/demanda/exportar?curso_codigo=${curso}&periodo_atual=${periodo}&modo=${modo}`, {
+      const response = await fetch(`${API_BASE}/demanda/exportar?curso_codigo=${curso}&periodo_atual=${periodo}&modo=regular`, {
         method: "GET",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -188,7 +198,7 @@ export default function Dashboard({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `demandas_${curso}_${periodo.replace("/", "-")}_${modo}.csv`;
+      a.download = `demandas_${curso}_${periodo.replace("/", "-")}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -344,6 +354,15 @@ export default function Dashboard({
     return c ? c.nome : codigo;
   };
 
+  const obrigatorias = demandas.filter(d => d.periodo_sugerido !== null);
+  const optativas = demandas.filter(d => d.periodo_sugerido === null);
+
+  const demandasExibidas = tipoFiltro === "obrigatorias"
+    ? obrigatorias
+    : tipoFiltro === "optativas"
+    ? optativas
+    : demandas;
+
   return (
     <div className="dashboard-container">
       <header className="dashboard-header">
@@ -449,18 +468,6 @@ export default function Dashboard({
             </div>
 
 
-            <div className="form-group flex-1">
-              <label htmlFor="select-modo">Modo de Análise</label>
-              <select
-                id="select-modo"
-                value={modo}
-                onChange={(e) => setModo(e.target.value)}
-              >
-                <option value="regular">Demanda no Semestre Regular</option>
-                <option value="extraordinaria">Oferta Extraordinária</option>
-              </select>
-            </div>
-
             <div className="filter-actions flex-align-end">
               <button onClick={handleExport} className="btn btn-success" disabled={demandas.length === 0}>
                 Exportar CSV
@@ -475,29 +482,50 @@ export default function Dashboard({
           </div>
         )}
 
-        {/* Alerta explicativo quando o semestre selecionado ainda não possui dados importados */}
+        {/* Banner de carregamento ativo com animação */}
+        {loading && (
+          <div className="dashboard-loading-banner">
+            <div className="loading-spinner-circle"></div>
+            <div className="loading-text-group">
+              <h4>Calculando estimativas de demanda...</h4>
+              <p>Cruzando dados acadêmicos, pré-requisitos e históricos para o período <strong>{periodo}</strong>. Por favor, aguarde.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Alerta explicativo apenas se o sistema inteiro estiver sem dados importados */}
         {(() => {
-          const periodoSelecionadoInfo = periodosList.find(p => p.codigo === periodo);
-          const semDados = periodoSelecionadoInfo && periodoSelecionadoInfo.total_registros === 0;
-          if (!semDados) return null;
+          if (loading || bannerDismissed) return null;
+          const temDadosNoSistema = periodosList.some(p => p.total_registros > 0) || demandas.some(d => d.total_alunos > 0);
+          if (temDadosNoSistema) return null;
           return (
             <div className="semester-empty-banner">
               <div className="semester-empty-banner-content">
                 <span className="semester-empty-banner-icon">ℹ️</span>
                 <div>
-                  <strong>Semestre {periodo} recém-cadastrado (sem dados de histórico importados):</strong>
+                  <strong>Nenhum histórico acadêmico carregado no sistema:</strong>
                   <p>
-                    As disciplinas curriculares do curso estão mapeadas com contagens zeradas. Para visualizar os alunos cursando, aptos e estimativas reais para este período, faça o upload dos novos arquivos de histórico escolar.
+                    As disciplinas curriculares estão mapeadas com contagens zeradas. Para visualizar os alunos cursando, aptos e estimativas reais, faça o upload dos novos arquivos de histórico escolar (.csv).
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm semester-empty-banner-btn"
-                onClick={() => setShowUploadModal(true)}
-              >
-                📥 Importar Histórico Agora
-              </button>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm semester-empty-banner-btn"
+                  onClick={() => setShowUploadModal(true)}
+                >
+                  📥 Importar Histórico Agora
+                </button>
+                <button
+                  type="button"
+                  className="semester-empty-banner-close"
+                  onClick={() => setBannerDismissed(true)}
+                  title="Fechar aviso"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           );
         })()}
@@ -505,13 +533,53 @@ export default function Dashboard({
         <div className="table-card">
           <div className="table-header-group">
             <h3>Estimativas de Demanda</h3>
-            <span className="results-count">{demandas.length} disciplinas mapeadas</span>
+            <span className="results-count">
+              {loading ? "Calculando..." : `${demandasExibidas.length} de ${demandas.length} disciplinas`}
+            </span>
           </div>
 
+          {/* Abas para filtrar entre Obrigatórias e Optativas */}
+          <div className="filter-tabs">
+            <button
+              type="button"
+              className={`filter-tab-btn ${tipoFiltro === "todas" ? "active" : ""}`}
+              onClick={() => setTipoFiltro("todas")}
+            >
+              Todas as Disciplinas <span className="filter-tab-count">{demandas.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-tab-btn ${tipoFiltro === "obrigatorias" ? "active" : ""}`}
+              onClick={() => setTipoFiltro("obrigatorias")}
+            >
+              Obrigatórias (Grade Regular) <span className="filter-tab-count">{obrigatorias.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`filter-tab-btn ${tipoFiltro === "optativas" ? "active" : ""}`}
+              onClick={() => setTipoFiltro("optativas")}
+            >
+              Optativas / Eletivas <span className="filter-tab-count">{optativas.length}</span>
+            </button>
+          </div>
+
+          {tipoFiltro === "optativas" && (
+            <div className="optativas-info-note">
+              <span>💡</span>
+              <div>
+                <strong>Sobre as disciplinas optativas:</strong> Como não possuem turmas regulares obrigatórias na grade, os Grupos A (cursando) e C (cursando pré-requisito) são normalmente zero. A demanda total reflete os alunos do <strong>Grupo B (aptos)</strong> que já possuem os pré-requisitos necessários para cursá-las.
+              </div>
+            </div>
+          )}
+
           {loading ? (
-            <div className="table-loading">Carregando estimativas de demanda...</div>
-          ) : demandas.length === 0 ? (
-            <div className="table-empty">Nenhum dado encontrado para os filtros selecionados.</div>
+            <div className="table-loading-container">
+              <div className="loading-spinner-circle"></div>
+              <p className="loading-title">Calculando estimativas do período {periodo}...</p>
+              <span className="loading-sub">Avaliando alunos nos Grupos A (cursando), B (aptos) e C (potenciais)</span>
+            </div>
+          ) : demandasExibidas.length === 0 ? (
+            <div className="table-empty">Nenhuma disciplina encontrada para esta categoria de filtro.</div>
           ) : (
             <div className="table-responsive">
               <table className="custom-table">
@@ -529,7 +597,7 @@ export default function Dashboard({
                   </tr>
                 </thead>
                 <tbody>
-                  {demandas.map((item) => {
+                  {demandasExibidas.map((item) => {
                     const isCompartilhada = item.demanda_por_curso && item.demanda_por_curso.length > 1;
                     const isExpandida = expandidos.has(item.conceito_id);
 
@@ -553,7 +621,13 @@ export default function Dashboard({
                           {curso !== "TODOS" && <td><strong>{item.disciplina_codigo || item.conceito_id}</strong></td>}
                           <td><strong>{item.disciplina_nome}</strong></td>
                           {curso !== "TODOS" && (
-                            <td className="text-center">{item.periodo_sugerido ? `${item.periodo_sugerido}º` : "-"}</td>
+                            <td className="text-center">
+                              {item.periodo_sugerido ? (
+                                <span className="badge-semestre">{item.periodo_sugerido}º Sem</span>
+                              ) : (
+                                <span className="badge-optativa" title="Disciplina Optativa / Eletiva">Optativa</span>
+                              )}
+                            </td>
                           )}
                           <td className="text-center"><span className="badge badge-a">{item.grupo_a_qtd}</span></td>
                           <td className="text-center"><span className="badge badge-b">{item.grupo_b_qtd}</span></td>

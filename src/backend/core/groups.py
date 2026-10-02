@@ -144,6 +144,148 @@ def _obter_codigos_disciplina(db: Session, curso_codigo: str, nome_alvo: str, co
         return [r[0] for r in query]
 
 
+def inicializar_context_cache(db: Session, curso_codigo: str = None) -> dict:
+    """Pré-carrega dados críticos de histórico, equivalências e taxas de aprovação em memória (RN09, RN10).
+
+    Transforma centenas de consultas SQL individuais em apenas duas consultas agrupadas de alta velocidade.
+    """
+    cache = {
+        "conceitos": {},
+        "mapa_codigos": defaultdict(list),
+        "passaram": {},
+        "inaptos": {},
+        "cursando_pre": {},
+        "prob_aprov": {},
+        "prereqs": {},
+        "ativos": {},
+        "hist_aprov": defaultdict(set),
+        "hist_inaptos": defaultdict(set),
+        "hist_cursando": defaultdict(set),
+    }
+
+    # 1. Mapa de códigos de disciplinas
+    cods_query = (
+        db.query(CodigoDisciplina.curso_codigo, ConceitoDisciplina.nome_normalizado, CodigoDisciplina.codigo)
+        .join(ConceitoDisciplina, CodigoDisciplina.conceito_id == ConceitoDisciplina.id)
+    )
+    if curso_codigo and curso_codigo != "TODOS":
+        cods_query = cods_query.filter(CodigoDisciplina.curso_codigo == curso_codigo)
+    for c_cod, n_norm, d_cod in cods_query.all():
+        cache["mapa_codigos"][(c_cod, n_norm)].append(d_cod)
+
+    # 2. Taxa de aprovação agregada de todos os conceitos
+    prob_query = (
+        db.query(ConceitoDisciplina.nome_normalizado, Historico.situacao, func.count(Historico.id))
+        .join(CodigoDisciplina, (Historico.curso_codigo == CodigoDisciplina.curso_codigo) & (Historico.disciplina_codigo == CodigoDisciplina.codigo))
+        .join(ConceitoDisciplina, CodigoDisciplina.conceito_id == ConceitoDisciplina.id)
+        .filter(Historico.situacao.in_(["aprovado", "reprovado"]))
+        .group_by(ConceitoDisciplina.nome_normalizado, Historico.situacao)
+        .all()
+    )
+    aprov_counts = defaultdict(int)
+    reprov_counts = defaultdict(int)
+    for nome_norm, situ, cnt in prob_query:
+        if situ == "aprovado":
+            aprov_counts[nome_norm] += cnt
+        elif situ == "reprovado":
+            reprov_counts[nome_norm] += cnt
+
+    for nome_norm in set(aprov_counts.keys()) | set(reprov_counts.keys()):
+        tot = aprov_counts[nome_norm] + reprov_counts[nome_norm]
+        cache["prob_aprov"][nome_norm] = round(aprov_counts[nome_norm] / tot, 4) if tot > 0 else 0.5
+
+    # 3. Pré-carrega situações em lote
+    hist_query = db.query(
+        Historico.aluno_matricula,
+        Historico.curso_codigo,
+        Historico.disciplina_codigo,
+        Historico.situacao,
+        Historico.periodo_letivo,
+    ).filter(Historico.situacao.in_(["aprovado", "cursando"]))
+    if curso_codigo and curso_codigo != "TODOS":
+        hist_query = hist_query.filter(Historico.curso_codigo == curso_codigo)
+
+    for m, c, d, s, p in hist_query.all():
+        if s == "aprovado":
+            cache["hist_aprov"][(c, d)].add(m)
+        cache["hist_inaptos"][(c, d)].add(m)
+        if s == "cursando":
+            cache["hist_cursando"][(c, d, p)].add(m)
+    # 4. Pré-carrega conceitos
+    for c_id, n_norm in db.query(ConceitoDisciplina.id, ConceitoDisciplina.nome_normalizado).all():
+        cache["conceitos"][c_id] = n_norm
+
+    # 5. Pré-carrega pré-requisitos
+    for p in db.query(PreRequisito).all():
+        if (p.curso_codigo, p.conceito_id) not in cache["prereqs"]:
+            cache["prereqs"][(p.curso_codigo, p.conceito_id)] = []
+        cache["prereqs"][(p.curso_codigo, p.conceito_id)].append(p)
+
+    # 6. Pré-carrega alunos ativos por curso
+    todos_alunos = db.query(Aluno.matricula, Aluno.curso_codigo).all()
+    alunos_por_curso = defaultdict(set)
+    for m, c in todos_alunos:
+        alunos_por_curso[c].add(m)
+
+    evadidos_query = db.query(Historico.aluno_matricula, Historico.curso_codigo).filter(
+        Historico.situacao_matricula.in_(["Abandono", "Cancelamento", "Desligamento", "Falecimento", "Cancelamento Sisu", "Guri"])
+    ).distinct().all()
+    evadidos_por_curso = defaultdict(set)
+    for m, c in evadidos_query:
+        evadidos_por_curso[c].add(m)
+
+    for c, mats in alunos_por_curso.items():
+        cache["ativos"][c] = mats - evadidos_por_curso[c]
+
+    # 7. Identifica o período mais representativo com alunos cursando ativamente (ex.: 2026/1)
+    periodo_cursando_mais_recente = (
+        db.query(Historico.periodo_letivo)
+        .filter(Historico.situacao == "cursando")
+        .group_by(Historico.periodo_letivo)
+        .order_by(func.count(Historico.id).desc())
+        .first()
+    )
+    cache["periodo_cursando_ref"] = periodo_cursando_mais_recente[0] if periodo_cursando_mais_recente else None
+
+    return cache
+
+
+def obter_periodo_cursando_referencia(db: Session, periodo_alvo: str, context_cache: dict = None) -> str:
+    """Retorna o período letivo a ser utilizado para identificar alunos 'cursando' (Grupos A e C).
+    
+    Se o período de planejamento (periodo_alvo) tiver registros de alunos cursando no banco, usa ele próprio.
+    Caso seja um período futuro de planejamento (ex.: 2026/2, 2027/2) que ainda não teve matrículas,
+    utiliza o período letivo vigente mais recente com matrículas ativas em andamento (ex.: 2026/1).
+    """
+    formatos = _formatos_periodo(periodo_alvo)
+    if context_cache is not None and "hist_cursando" in context_cache:
+        tem_cursando = any(k[2] in formatos for k in context_cache["hist_cursando"].keys())
+        if tem_cursando:
+            return periodo_alvo
+        return context_cache.get("periodo_cursando_ref") or periodo_alvo
+
+    tem_no_db = (
+        db.query(Historico.id)
+        .filter(
+            Historico.situacao == "cursando",
+            Historico.periodo_letivo.in_(formatos),
+        )
+        .first()
+        is not None
+    )
+    if tem_no_db:
+        return periodo_alvo
+
+    periodos_cursando = (
+        db.query(Historico.periodo_letivo)
+        .filter(Historico.situacao == "cursando")
+        .group_by(Historico.periodo_letivo)
+        .order_by(func.count(Historico.id).desc())
+        .first()
+    )
+    return periodos_cursando[0] if periodos_cursando else periodo_alvo
+
+
 def _obter_passaram_disciplina(db: Session, curso_codigo: str, pre_nome: str, context_cache: dict = None) -> Set[str]:
     key = (curso_codigo, pre_nome)
     if context_cache is not None:
@@ -155,6 +297,10 @@ def _obter_passaram_disciplina(db: Session, curso_codigo: str, pre_nome: str, co
     cods = _obter_codigos_disciplina(db, curso_codigo, pre_nome, context_cache)
     if not cods:
         passaram = set()
+    elif context_cache is not None and "hist_aprov" in context_cache:
+        passaram = set()
+        for c in cods:
+            passaram |= context_cache["hist_aprov"].get((curso_codigo, c), set())
     else:
         passaram = set(r[0] for r in db.query(Historico.aluno_matricula)
             .filter(
@@ -179,6 +325,10 @@ def _obter_inaptos_disciplina(db: Session, curso_codigo: str, nome_alvo: str, co
     cods = _obter_codigos_disciplina(db, curso_codigo, nome_alvo, context_cache)
     if not cods:
         inaptos = set()
+    elif context_cache is not None and "hist_inaptos" in context_cache:
+        inaptos = set()
+        for c in cods:
+            inaptos |= context_cache["hist_inaptos"].get((curso_codigo, c), set())
     else:
         inaptos = set(r[0] for r in db.query(Historico.aluno_matricula)
             .filter(
@@ -278,6 +428,11 @@ def grupo_a(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
     cods = _obter_codigos_disciplina(db, curso_codigo, nome_alvo, context_cache)
     if not cods:
         res_mats = set()
+    elif context_cache is not None and "hist_cursando" in context_cache:
+        res_mats = set()
+        for fmt in formatos:
+            for c in cods:
+                res_mats |= context_cache["hist_cursando"].get((curso_codigo, c, fmt), set())
     else:
         query = (
             db.query(Historico.aluno_matricula)
@@ -390,6 +545,11 @@ def _obter_cursando_disciplina(db: Session, curso_codigo: str, pre_nome: str, fo
     cods = _obter_codigos_disciplina(db, curso_codigo, pre_nome, context_cache)
     if not cods:
         cursando = set()
+    elif context_cache is not None and "hist_cursando" in context_cache:
+        cursando = set()
+        for fmt in formatos:
+            for c in cods:
+                cursando |= context_cache["hist_cursando"].get((curso_codigo, c, fmt), set())
     else:
         cursando = set(r[0] for r in db.query(Historico.aluno_matricula)
             .filter(

@@ -27,6 +27,8 @@ from core.groups import (
     _formatos_periodo,
     _obter_nome_normalizado,
     _obter_codigos_disciplina,
+    inicializar_context_cache,
+    obter_periodo_cursando_referencia,
 )
 
 router = APIRouter()
@@ -99,22 +101,39 @@ def listar_periodos(
     usuario_atual: Usuario = Depends(obter_usuario_atual),
 ):
     """
-    Retorna a lista dinâmica de períodos letivos disponíveis no banco de dados,
-    ordenados decrescente pelo ano e semestre, com contagem de matrículas.
+    Retorna a lista dinâmica de períodos letivos de planejamento cadastrados no banco de dados.
+    Apenas semestres oficiais de planejamento (cadastrados pelo coordenador ou vigentes) são exibidos.
     """
     import re
-    # 1. Busca períodos explícitos cadastrados em PeriodoLetivo
+
+    # 1. Busca exclusivamente períodos cadastrados em PeriodoLetivo
     periodos_db = db.query(PeriodoLetivo).all()
     if not periodos_db:
-        # Garante o período base padrão (2026/1) caso o banco seja novo
-        p_padrao = PeriodoLetivo(codigo="2026/1", ano=2026, semestre=1, descricao="2026/1", is_atual=True)
-        db.add(p_padrao)
+        p_atual = PeriodoLetivo(codigo="2026/1", ano=2026, semestre=1, descricao="2026/1", is_atual=True)
+        p_prox = PeriodoLetivo(codigo="2026/2", ano=2026, semestre=2, descricao="2026/2", is_atual=False)
+        db.add(p_atual)
+        db.add(p_prox)
         db.commit()
-        periodos_db = [p_padrao]
+        periodos_db = [p_atual, p_prox]
+    else:
+        # Se 2026/1 possui dados de matrículas ativas no histórico mas não está cadastrado em PeriodoLetivo, adiciona
+        if not any(p.codigo == "2026/1" for p in periodos_db):
+            tem_2026_1 = db.query(Historico.id).filter(Historico.periodo_letivo == "2026/1").first() is not None
+            if tem_2026_1:
+                p_atual = PeriodoLetivo(codigo="2026/1", ano=2026, semestre=1, descricao="2026/1", is_atual=True)
+                db.add(p_atual)
+                db.commit()
+                periodos_db.append(p_atual)
+
+        # Garante que pelo menos um período válido seja marcado como atual
+        if not any(p.is_atual for p in periodos_db):
+            p_alvo = next((p for p in periodos_db if p.codigo == "2026/1"), periodos_db[0])
+            p_alvo.is_atual = True
+            db.commit()
 
     periodos_cadastrados = {p.codigo: p for p in periodos_db}
 
-    # 2. Busca contagens por período no Histórico (apenas para alimentar os períodos cadastrados)
+    # 2. Busca contagens por período no Histórico (apenas para os períodos cadastrados)
     formatos_alvo = []
     for cod in periodos_cadastrados.keys():
         formatos_alvo.extend(_formatos_periodo(cod))
@@ -137,14 +156,12 @@ def listar_periodos(
             return (int(match.group(1)), int(match.group(2)))
         return (0, 0)
 
-    # Exclusivamente os períodos cadastrados em PeriodoLetivo
     codigos_validos = list(periodos_cadastrados.keys())
     codigos_validos.sort(key=parse_periodo, reverse=True)
 
     resultado = []
     for c in codigos_validos:
         tot, curs = stats_map.get(c, (0, 0))
-        # Também verifica formatos equivalentes se houver
         if tot == 0:
             for fmt in _formatos_periodo(c):
                 if fmt in stats_map:
@@ -155,13 +172,12 @@ def listar_periodos(
         ano, sem = parse_periodo(c)
         p_obj = periodos_cadastrados.get(c)
         is_atual = p_obj.is_atual if p_obj else False
-        tipo = "impar" if sem == 1 else "par"
 
         resultado.append({
             "codigo": c,
             "ano": ano,
             "semestre": sem,
-            "tipo": tipo,
+            "tipo": "impar" if sem == 1 else "par",
             "descricao": p_obj.descricao if (p_obj and p_obj.descricao) else f"{ano}/{sem}",
             "total_registros": tot,
             "total_cursando": curs,
@@ -265,6 +281,17 @@ def excluir_periodo(
     }
 
 
+def _tem_dados_academicos(db: Session, context_cache: dict = None) -> bool:
+    """Verifica se existem registros de histórico escolar carregados no banco de dados."""
+    if context_cache is not None:
+        if "tem_dados_historico" in context_cache:
+            return context_cache["tem_dados_historico"]
+    existe = db.query(Historico.id).first() is not None
+    if context_cache is not None:
+        context_cache["tem_dados_historico"] = existe
+    return existe
+
+
 def _periodo_possui_dados(db: Session, periodo_atual: str, context_cache: dict = None) -> bool:
     """Verifica se existem registros em Historico para o período solicitado."""
     if context_cache is not None:
@@ -280,8 +307,8 @@ def _periodo_possui_dados(db: Session, periodo_atual: str, context_cache: dict =
 
 def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str, context_cache: dict = None) -> dict:
     """Calcula A, B, C e demanda estimada para um par (curso, conceito)."""
-    # Se o período é novo e ainda não possui registros no histórico, retorna contagens zeradas
-    if not _periodo_possui_dados(db, periodo_atual, context_cache):
+    # Se o banco de dados não possui nenhum registro acadêmico importado, retorna contagens zeradas
+    if not _tem_dados_academicos(db, context_cache):
         return {
             "curso_codigo": curso_codigo,
             "grupo_a_qtd": 0,
@@ -293,9 +320,10 @@ def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: s
             "total_alunos": 0,
         }
 
-    ga = grupo_a(db, curso_codigo, conceito_id, periodo_atual, context_cache)
+    periodo_cursando = obter_periodo_cursando_referencia(db, periodo_atual, context_cache)
+    ga = grupo_a(db, curso_codigo, conceito_id, periodo_cursando, context_cache)
     gb = grupo_b(db, curso_codigo, conceito_id, context_cache)
-    gc = grupo_c(db, curso_codigo, conceito_id, periodo_atual, context_cache)
+    gc = grupo_c(db, curso_codigo, conceito_id, periodo_cursando, context_cache)
     prob_a = sum(aluno.probabilidade_reprovacao for aluno in ga)
     prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
     total_ponderado = prob_a + len(gb) + prob_c
@@ -313,34 +341,11 @@ def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: s
     }
 
 
-def _filtrar_vinculos_por_modo(vinculos, modo: str, periodo_atual: str):
-    """Aplica filtro de modo extraordinário se necessário (RN02 / RF06).
-
-    Aceita tanto objetos VinculoCurricular puros quanto tuplas (VinculoCurricular, ConceitoDisciplina).
-    Suporta formatos como '2026/1', '2026/01', '20261' (ímpar) e '2026/2', '2026/02', '20262' (par).
-    """
-    if modo == "extraordinaria":
-        p_clean = periodo_atual.replace("/", "").strip()
-        semestre_tipo = "impar" if p_clean.endswith("1") or p_clean.endswith("01") else "par"
-        vinculos = [
-            v for v in vinculos
-            if _get_vinculo(v).periodicidade_oferta is not None
-            and _get_vinculo(v).periodicidade_oferta != "ambos"
-            and _get_vinculo(v).periodicidade_oferta != semestre_tipo
-        ]
-    return vinculos
-
-
-def _get_vinculo(item):
-    """Extrai o VinculoCurricular de um item que pode ser o objeto direto ou uma tupla."""
-    return item[0] if isinstance(item, tuple) else item
-
-
 @router.get("")
 def obter_demandas(
     curso_codigo: str,
     periodo_atual: str,
-    modo: str = "regular",
+    modo: str = None,
     db: Session = Depends(get_db),
     usuario_atual: Usuario = Depends(obter_usuario_atual),
 ):
@@ -352,12 +357,12 @@ def obter_demandas(
     com a quebra individual por curso.
     """
     usr_id = usuario_atual.id if usuario_atual else None
-    registrar_acesso(db, "consulta_demanda", f"Curso: {curso_codigo}, Periodo: {periodo_atual}, Modo: {modo}", usr_id)
+    registrar_acesso(db, "consulta_demanda", f"Curso: {curso_codigo}, Periodo: {periodo_atual}", usr_id)
 
     if curso_codigo == "TODOS":
-        return _obter_demandas_todos_cursos(db, periodo_atual, modo)
+        return _obter_demandas_todos_cursos(db, periodo_atual)
 
-    # --- Modo por curso específico ---
+    # --- Consulta por curso específico ---
     vinculos_query = (
         db.query(VinculoCurricular)
         .join(ConceitoDisciplina, VinculoCurricular.conceito_id == ConceitoDisciplina.id)
@@ -371,10 +376,10 @@ def obter_demandas(
             detail=f"Nenhum vínculo curricular encontrado para o curso '{curso_codigo}'",
         )
 
-    vinculos = _filtrar_vinculos_por_modo(list(vinculos_query), modo, periodo_atual)
+    vinculos = list(vinculos_query)
     mapa_codigos = _mapear_codigos_disciplina(db, curso_codigo)
 
-    context_cache = {}
+    context_cache = inicializar_context_cache(db, curso_codigo)
     resultado = []
     for vinc in vinculos:
         conceito = db.query(ConceitoDisciplina).filter(ConceitoDisciplina.id == vinc.conceito_id).first()
@@ -403,7 +408,7 @@ def obter_demandas(
     return resultado
 
 
-def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
+def _obter_demandas_todos_cursos(db: Session, periodo_atual: str):
     """
     RF12 — Consolida demanda de todos os cursos, agrupando disciplinas
     pelo nome_normalizado (mesma disciplina em cursos diferentes).
@@ -419,12 +424,6 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
         .all()
     )
 
-    todos_vinculos = _filtrar_vinculos_por_modo(
-        [(v, c) for v, c in todos_vinculos],
-        modo,
-        periodo_atual,
-    )
-
     mapa_codigos = _mapear_codigos_disciplina(db)
 
     # Agrupa por nome_normalizado (disciplinas "iguais" em cursos diferentes)
@@ -433,7 +432,7 @@ def _obter_demandas_todos_cursos(db: Session, periodo_atual: str, modo: str):
     for vinc, conceito in todos_vinculos:
         grupos_por_nome[conceito.nome_normalizado].append((vinc, conceito))
 
-    context_cache = {}
+    context_cache = inicializar_context_cache(db, None)
     resultado = []
     for nome_normalizado, pares in sorted(grupos_por_nome.items()):
         demanda_por_curso = []
@@ -523,7 +522,7 @@ def obter_detalhe_demanda(
 
     cod_oficial = _obter_codigo_disciplina(db, curso_codigo, conceito_id_efetivo)
 
-    if not _periodo_possui_dados(db, periodo_atual):
+    if not _tem_dados_academicos(db):
         ga = []
         gb = []
         gc = []
@@ -531,9 +530,10 @@ def obter_detalhe_demanda(
         prob_c = 0.0
         total = 0.0
     else:
-        ga = grupo_a(db, curso_codigo, conceito_id_efetivo, periodo_atual)
+        periodo_cursando = obter_periodo_cursando_referencia(db, periodo_atual)
+        ga = grupo_a(db, curso_codigo, conceito_id_efetivo, periodo_cursando)
         gb = grupo_b(db, curso_codigo, conceito_id_efetivo)
-        gc = grupo_c(db, curso_codigo, conceito_id_efetivo, periodo_atual)
+        gc = grupo_c(db, curso_codigo, conceito_id_efetivo, periodo_cursando)
         prob_a = sum(aluno.probabilidade_reprovacao for aluno in ga)
         prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
         total = prob_a + len(gb) + prob_c
@@ -570,11 +570,11 @@ def exportar_demandas_csv(
 ):
     """Gera um arquivo CSV formatado com a estimativa de demanda do curso no período."""
     usr_id = usuario_atual.id if usuario_atual else None
-    registrar_acesso(db, "exportacao_csv", f"Curso: {curso_codigo}, Periodo: {periodo_atual}, Modo: {modo}", usr_id)
+    registrar_acesso(db, "exportacao_csv", f"Curso: {curso_codigo}, Periodo: {periodo_atual}", usr_id)
 
     # Reutiliza a lógica de obter_demandas para garantir consistência
     if curso_codigo == "TODOS":
-        demandas = _obter_demandas_todos_cursos(db, periodo_atual, modo)
+        demandas = _obter_demandas_todos_cursos(db, periodo_atual)
     else:
         vinculos_query = (
             db.query(VinculoCurricular)
@@ -589,7 +589,7 @@ def exportar_demandas_csv(
                 detail=f"Nenhum vínculo curricular encontrado para o curso '{curso_codigo}'",
             )
 
-        vinculos = _filtrar_vinculos_por_modo(list(vinculos_query), modo, periodo_atual)
+        vinculos = list(vinculos_query)
         mapa_codigos = _mapear_codigos_disciplina(db, curso_codigo)
         demandas = []
         for vinc in vinculos:

@@ -94,6 +94,16 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
     fetchDetalhe();
   }, [cursoCodigo, conceitoId, periodo, token]);
 
+  useEffect(() => {
+    if (detalhe) {
+      const aCount = Array.isArray(detalhe.grupo_a) ? detalhe.grupo_a.length : 0;
+      const bCount = Array.isArray(detalhe.grupo_b) ? detalhe.grupo_b.length : 0;
+      if (aCount === 0 && bCount > 0) {
+        setActiveTab("B");
+      }
+    }
+  }, [detalhe]);
+
   const handleOpenDeleteModal = (matricula: string) => {
     setMatriculaToDelete(matricula);
     setJustificativa("");
@@ -188,8 +198,10 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
               <div className="detail-badges-row">
                 <span className="concept-id-badge">{detalhe.disciplina_codigo || detalhe.conceito_id}</span>
                 <span className="course-badge">{detalhe.curso_nome} ({detalhe.curso_codigo})</span>
-                {detalhe.periodo_sugerido && (
+                {detalhe.periodo_sugerido ? (
                   <span className="semester-badge">{detalhe.periodo_sugerido}º Semestre (Grade Ideal)</span>
+                ) : (
+                  <span className="semester-badge" style={{ backgroundColor: "#f3e8ff", color: "#7e22ce", borderColor: "#d8b4fe" }}>Componente Optativo / Eletivo</span>
                 )}
                 {detalhe.periodicidade_oferta && (
                   <span className="periodicity-badge">
@@ -242,7 +254,7 @@ export default function Detalhe({ token, cursoCodigo, conceitoId, periodo, onBac
             <div key={`content-${activeTab}`} className="list-content">
               {activeTab === "A" && (
                 listA.length === 0 ? (
-                  <p key="no-students-a" className="no-students">Nenhum aluno matriculado neste período.</p>
+                  <p key="no-students-a" className="no-students">Nenhum aluno matriculado cursando esta disciplina no período de referência (comum em optativas ou semestres alternados).</p>
                 ) : (
                   <ul key="list-students-a" className="student-list">
                     {listA.map((item, idx) => {

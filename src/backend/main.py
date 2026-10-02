@@ -17,6 +17,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
+from db.database import engine, Base
+import db.models
+
+Base.metadata.create_all(bind=engine)
+
 # Libera o frontend (React, rodando em outra porta durante o desenvolvimento)
 # a chamar esta API. Em produção, restrinja allow_origins ao domínio real.
 app.add_middleware(

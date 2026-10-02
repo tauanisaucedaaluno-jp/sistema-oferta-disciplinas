@@ -162,25 +162,25 @@ def test_excluir_periodo(client_and_db):
 
 
 def test_periodo_sem_dados_demanda_zerada(client_and_db):
-    """Garante que criar um novo período sem dados retorna demandas curriculares com contagens zeradas."""
+    """Garante que curso sem alunos ou histórico acadêmico retorna demandas com contagens zeradas."""
     client, session = client_and_db
 
-    # Cria conceito e vínculo curricular para o curso CC
-    calc1 = ConceitoDisciplina(id="CC-CALC1", curso_codigo="CC", nome_normalizado="CALCULO I")
+    # Cria conceito e vínculo curricular para um curso sem alunos matriculados
+    calc1 = ConceitoDisciplina(id="NOVO-CALC1", curso_codigo="CURSO_NOVO", nome_normalizado="CALCULO NOVO")
     session.add(calc1)
     session.commit()
 
-    cod_calc1 = CodigoDisciplina(codigo="AL0001", curso_codigo="CC", conceito_id="CC-CALC1")
-    vinc = VinculoCurricular(curso_codigo="CC", conceito_id="CC-CALC1", periodo_sugerido=1, periodicidade_oferta="ambos")
+    cod_calc1 = CodigoDisciplina(codigo="NV0001", curso_codigo="CURSO_NOVO", conceito_id="NOVO-CALC1")
+    vinc = VinculoCurricular(curso_codigo="CURSO_NOVO", conceito_id="NOVO-CALC1", periodo_sugerido=1, periodicidade_oferta="ambos")
     session.add_all([cod_calc1, vinc])
     session.commit()
 
-    # Cria o novo semestre 2028/1 (ainda sem upload de histórico)
+    # Cria o novo semestre 2028/1
     res_criar = client.post("/demanda/periodos", json={"periodo": "2028/1", "descricao": "Semestre Futuro"})
     assert res_criar.status_code == 200
 
-    # Consulta demandas para 2028/1
-    res_demanda = client.get("/demanda?curso_codigo=CC&periodo_atual=2028/1&modo=regular")
+    # Consulta demandas para o curso sem histórico
+    res_demanda = client.get("/demanda?curso_codigo=CURSO_NOVO&periodo_atual=2028/1&modo=regular")
     assert res_demanda.status_code == 200
     demandas = res_demanda.json()
     assert len(demandas) >= 1

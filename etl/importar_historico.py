@@ -112,6 +112,12 @@ def normalizar_situacao(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
     col_sit = 'situacao_na_disciplina'
+    if col_sit not in df.columns:
+        raise ValueError(
+            "O arquivo selecionado não contém as colunas do Histórico Escolar (como a situação das disciplinas dos alunos). "
+            "Você selecionou um relatório de demandas exportado (ex.: 'demandas_TODOS_...csv'). "
+            "Por favor, selecione os arquivos de Histórico Escolar originais (.csv) exportados do Guri/sistema acadêmico."
+        )
     df['situacao_canoniva'] = df[col_sit].apply(_normalize)
     return df
 

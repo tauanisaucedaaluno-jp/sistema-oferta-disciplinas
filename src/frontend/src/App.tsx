@@ -14,8 +14,10 @@ function App() {
   const [selectedConceitoId, setSelectedConceitoId] = useState<string | null>(null);
   const [curso, setCurso] = useState<string>("ALES");
   const [periodo, setPeriodo] = useState<string>("2026/1");
-  const [modo, setModo] = useState<string>("regular");
   const [cursoCodigo, setCursoCodigo] = useState<string>("ALES");
+  const [demandas, setDemandas] = useState<any[]>([]);
+  const [periodosList, setPeriodosList] = useState<any[]>([]);
+  const [cursos, setCursos] = useState<any[]>([]);
 
   useEffect(() => {
     // Tenta carregar a sessão do localStorage
@@ -71,8 +73,12 @@ function App() {
           setCurso={setCurso}
           periodo={periodo}
           setPeriodo={setPeriodo}
-          modo={modo}
-          setModo={setModo}
+          demandas={demandas}
+          setDemandas={setDemandas}
+          periodosList={periodosList}
+          setPeriodosList={setPeriodosList}
+          cursos={cursos}
+          setCursos={setCursos}
           onLogout={handleLogout}
           onSelectDisciplina={handleSelectDisciplina}
         />
