@@ -16,6 +16,7 @@ from db.models import (
     Usuario,
     Historico,
     PeriodoLetivo,
+    DemandaSnapshot,
 )
 from api.auth import obter_usuario_atual
 from api.deps import registrar_acesso
@@ -101,39 +102,24 @@ def listar_periodos(
     usuario_atual: Usuario = Depends(obter_usuario_atual),
 ):
     """
-    Retorna a lista dinâmica de períodos letivos de planejamento cadastrados no banco de dados.
-    Apenas semestres oficiais de planejamento (cadastrados pelo coordenador ou vigentes) são exibidos.
+    Retorna a lista dinâmica de períodos letivos de planejamento cadastrados no banco de dados para o coordenador atual.
+    Cada usuário possui sua própria visão isolada de períodos. Se não tiver nenhum semestre cadastrado ainda, retorna lista vazia.
     """
     import re
 
-    # 1. Busca exclusivamente períodos cadastrados em PeriodoLetivo
-    periodos_db = db.query(PeriodoLetivo).all()
+    # 1. Busca exclusivamente períodos cadastrados por este usuário
+    periodos_db = db.query(PeriodoLetivo).filter(PeriodoLetivo.usuario_id == usuario_atual.id).all()
     if not periodos_db:
-        p_atual = PeriodoLetivo(codigo="2026/1", ano=2026, semestre=1, descricao="2026/1", is_atual=True)
-        p_prox = PeriodoLetivo(codigo="2026/2", ano=2026, semestre=2, descricao="2026/2", is_atual=False)
-        db.add(p_atual)
-        db.add(p_prox)
-        db.commit()
-        periodos_db = [p_atual, p_prox]
-    else:
-        # Se 2026/1 possui dados de matrículas ativas no histórico mas não está cadastrado em PeriodoLetivo, adiciona
-        if not any(p.codigo == "2026/1" for p in periodos_db):
-            tem_2026_1 = db.query(Historico.id).filter(Historico.periodo_letivo == "2026/1").first() is not None
-            if tem_2026_1:
-                p_atual = PeriodoLetivo(codigo="2026/1", ano=2026, semestre=1, descricao="2026/1", is_atual=True)
-                db.add(p_atual)
-                db.commit()
-                periodos_db.append(p_atual)
+        return []
 
-        # Garante que pelo menos um período válido seja marcado como atual
-        if not any(p.is_atual for p in periodos_db):
-            p_alvo = next((p for p in periodos_db if p.codigo == "2026/1"), periodos_db[0])
-            p_alvo.is_atual = True
-            db.commit()
+    # Garante que pelo menos um período válido seja marcado como atual
+    if not any(p.is_atual for p in periodos_db):
+        periodos_db[0].is_atual = True
+        db.commit()
 
     periodos_cadastrados = {p.codigo: p for p in periodos_db}
 
-    # 2. Busca contagens por período no Histórico (apenas para os períodos cadastrados)
+    # 2. Busca contagens por período no Histórico (apenas para os períodos cadastrados deste usuário)
     formatos_alvo = []
     for cod in periodos_cadastrados.keys():
         formatos_alvo.extend(_formatos_periodo(cod))
@@ -195,6 +181,7 @@ def criar_periodo(
 ):
     """
     Cria ou habilita oficialmente um novo semestre letivo para o sistema (ex.: '2026/2').
+    Isolado por coordenador logado.
     """
     import re
     p_clean = req.periodo.strip()
@@ -202,21 +189,28 @@ def criar_periodo(
     if not match:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Formato de período inválido. Use o padrão AAAA/1 ou AAAA/2 (ex.: 2026/2).",
+            detail="Formato de período inválido. Use o padrão AAAA/1 ou AAAA/2.",
         )
     ano = int(match.group(1))
     semestre = int(match.group(2))
     codigo_canonico = f"{ano}/{semestre}"
 
     if req.is_atual:
-        db.query(PeriodoLetivo).filter(PeriodoLetivo.is_atual == True).update({"is_atual": False})
+        db.query(PeriodoLetivo).filter(
+            PeriodoLetivo.usuario_id == usuario_atual.id,
+            PeriodoLetivo.is_atual == True,
+        ).update({"is_atual": False})
 
-    existente = db.query(PeriodoLetivo).filter(PeriodoLetivo.codigo == codigo_canonico).first()
+    existente = db.query(PeriodoLetivo).filter(
+        PeriodoLetivo.usuario_id == usuario_atual.id,
+        PeriodoLetivo.codigo == codigo_canonico,
+    ).first()
     if existente:
         existente.descricao = req.descricao or existente.descricao
         existente.is_atual = req.is_atual
     else:
         novo = PeriodoLetivo(
+            usuario_id=usuario_atual.id,
             codigo=codigo_canonico,
             ano=ano,
             semestre=semestre,
@@ -224,6 +218,27 @@ def criar_periodo(
             is_atual=req.is_atual,
         )
         db.add(novo)
+        db.flush()
+
+        # Garante que o novo semestre nasça 100% zerado e isolado de semestres anteriores (ex.: 2026/1)
+        vinculos = db.query(VinculoCurricular.curso_codigo, VinculoCurricular.conceito_id).distinct().all()
+        snapshots_zerados = [
+            DemandaSnapshot(
+                usuario_id=usuario_atual.id,
+                periodo_codigo=codigo_canonico,
+                curso_codigo=c_cod,
+                conceito_id=conc_id,
+                grupo_a_qtd=0,
+                grupo_b_qtd=0,
+                grupo_c_qtd=0,
+                grupo_a_prob=0.0,
+                grupo_c_prob=0.0,
+                demanda_estimada=0.0,
+            )
+            for c_cod, conc_id in vinculos
+        ]
+        if snapshots_zerados:
+            db.bulk_save_objects(snapshots_zerados)
 
     db.commit()
 
@@ -251,7 +266,7 @@ def excluir_periodo(
     usuario_atual: Usuario = Depends(obter_usuario_atual),
 ):
     """
-    Exclui um semestre letivo e todos os registros de histórico associados a ele.
+    Exclui um semestre letivo e os snapshots de demanda associados a ele para o coordenador atual.
     Permite à coordenação remover uploads errados, períodos de teste ou resíduos.
     """
     p_clean = periodo.strip().replace("-", "/")
@@ -260,8 +275,17 @@ def excluir_periodo(
     # 1. Deleta registros de Historico do período
     linhas_historico = db.query(Historico).filter(Historico.periodo_letivo.in_(formatos)).delete(synchronize_session=False)
 
-    # 2. Deleta registro de PeriodoLetivo
-    db.query(PeriodoLetivo).filter(PeriodoLetivo.codigo.in_(formatos)).delete(synchronize_session=False)
+    # 2. Deleta snapshots de demanda do período e deste usuário
+    db.query(DemandaSnapshot).filter(
+        DemandaSnapshot.usuario_id == usuario_atual.id,
+        DemandaSnapshot.periodo_codigo.in_(formatos),
+    ).delete(synchronize_session=False)
+
+    # 3. Deleta registro de PeriodoLetivo deste usuário
+    db.query(PeriodoLetivo).filter(
+        PeriodoLetivo.usuario_id == usuario_atual.id,
+        PeriodoLetivo.codigo.in_(formatos),
+    ).delete(synchronize_session=False)
 
     db.commit()
 
@@ -277,7 +301,7 @@ def excluir_periodo(
         "status": "sucesso",
         "periodo": p_clean,
         "linhas_removidas": linhas_historico,
-        "mensagem": f"Semestre {p_clean} excluído com sucesso ({linhas_historico} registros removidos).",
+        "mensagem": f"Semestre {p_clean} excluído com sucesso do seu painel ({linhas_historico} registros removidos).",
     }
 
 
@@ -307,8 +331,8 @@ def _periodo_possui_dados(db: Session, periodo_atual: str, context_cache: dict =
 
 def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str, context_cache: dict = None) -> dict:
     """Calcula A, B, C e demanda estimada para um par (curso, conceito)."""
-    # Se o banco de dados não possui nenhum registro acadêmico importado, retorna contagens zeradas
-    if not _tem_dados_academicos(db, context_cache):
+    # Se o banco de dados não possui nenhum registro acadêmico importado OU se o período não possui matrículas importadas:
+    if not _tem_dados_academicos(db, context_cache) or not _periodo_possui_dados(db, periodo_atual, context_cache):
         return {
             "curso_codigo": curso_codigo,
             "grupo_a_qtd": 0,
@@ -320,7 +344,7 @@ def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: s
             "total_alunos": 0,
         }
 
-    periodo_cursando = obter_periodo_cursando_referencia(db, periodo_atual, context_cache)
+    periodo_cursando = obter_periodo_cursando_referencia(db, periodo_atual, curso_codigo, context_cache)
     ga = grupo_a(db, curso_codigo, conceito_id, periodo_cursando, context_cache)
     gb = grupo_b(db, curso_codigo, conceito_id, context_cache)
     gc = grupo_c(db, curso_codigo, conceito_id, periodo_cursando, context_cache)
@@ -341,6 +365,144 @@ def _calcular_demanda_por_vinculo(db: Session, curso_codigo: str, conceito_id: s
     }
 
 
+def _obter_demandas_por_snapshot(db: Session, curso_codigo: str, periodo_atual: str, usuario_id: Optional[int] = None):
+    """
+    Tenta carregar o resultado consolidado diretamente de DemandaSnapshot.
+    Garante que cálculos de períodos antigos permaneçam imutáveis e isolados por usuário.
+    """
+    mapa_codigos = _mapear_codigos_disciplina(db, curso_codigo if curso_codigo != "TODOS" else None)
+
+    if curso_codigo != "TODOS":
+        filtros = [
+            DemandaSnapshot.periodo_codigo == periodo_atual,
+            DemandaSnapshot.curso_codigo == curso_codigo,
+        ]
+        if usuario_id is not None:
+            filtros.append(DemandaSnapshot.usuario_id == usuario_id)
+
+        snaps = (
+            db.query(DemandaSnapshot, VinculoCurricular, ConceitoDisciplina)
+            .outerjoin(
+                VinculoCurricular,
+                (DemandaSnapshot.curso_codigo == VinculoCurricular.curso_codigo)
+                & (DemandaSnapshot.conceito_id == VinculoCurricular.conceito_id),
+            )
+            .outerjoin(ConceitoDisciplina, DemandaSnapshot.conceito_id == ConceitoDisciplina.id)
+            .filter(*filtros)
+            .all()
+        )
+        if not snaps:
+            return None
+
+        resultado = []
+        for snap, vinc, conc in snaps:
+            cod_oficial = mapa_codigos.get((curso_codigo, snap.conceito_id), snap.conceito_id)
+            dados_curso = {
+                "curso_codigo": curso_codigo,
+                "disciplina_codigo": cod_oficial,
+                "grupo_a_qtd": snap.grupo_a_qtd,
+                "grupo_a_prob": snap.grupo_a_prob,
+                "grupo_b_qtd": snap.grupo_b_qtd,
+                "grupo_c_qtd": snap.grupo_c_qtd,
+                "grupo_c_prob": snap.grupo_c_prob,
+                "demanda_estimada": snap.demanda_estimada,
+                "total_alunos": snap.grupo_a_qtd + snap.grupo_b_qtd + snap.grupo_c_qtd,
+            }
+            nome_disc = conc.nome_normalizado if conc else snap.conceito_id
+            p_sug = vinc.periodo_sugerido if vinc else None
+            p_oferta = vinc.periodicidade_oferta if vinc else None
+            resultado.append({
+                "conceito_id": snap.conceito_id,
+                "disciplina_codigo": cod_oficial,
+                "disciplina_nome": nome_disc,
+                "periodo_sugerido": p_sug,
+                "periodicidade_oferta": p_oferta,
+                "grupo_a_qtd": snap.grupo_a_qtd,
+                "grupo_b_qtd": snap.grupo_b_qtd,
+                "grupo_c_qtd": snap.grupo_c_qtd,
+                "demanda_estimada": snap.demanda_estimada,
+                "total_alunos": snap.grupo_a_qtd + snap.grupo_b_qtd + snap.grupo_c_qtd,
+                "demanda_por_curso": [dados_curso],
+            })
+        return resultado
+    else:
+        # TODOS os cursos
+        filtros = [DemandaSnapshot.periodo_codigo == periodo_atual]
+        if usuario_id is not None:
+            filtros.append(DemandaSnapshot.usuario_id == usuario_id)
+
+        snaps = (
+            db.query(DemandaSnapshot, VinculoCurricular, ConceitoDisciplina)
+            .outerjoin(
+                VinculoCurricular,
+                (DemandaSnapshot.curso_codigo == VinculoCurricular.curso_codigo)
+                & (DemandaSnapshot.conceito_id == VinculoCurricular.conceito_id),
+            )
+            .outerjoin(ConceitoDisciplina, DemandaSnapshot.conceito_id == ConceitoDisciplina.id)
+            .filter(*filtros)
+            .all()
+        )
+        if not snaps:
+            return None
+
+        grupos_por_nome = defaultdict(list)
+        for snap, vinc, conc in snaps:
+            nome_chave = conc.nome_normalizado if conc else snap.conceito_id
+            grupos_por_nome[nome_chave].append((snap, vinc, conc))
+
+        resultado = []
+        for nome_normalizado, itens in sorted(grupos_por_nome.items()):
+            demanda_por_curso = []
+            total_a_qtd = 0
+            total_a_prob = 0.0
+            total_b = 0
+            total_c_qtd = 0
+            total_c_prob = 0.0
+            total_alunos = 0
+
+            snap_ref, vinc_ref, conc_ref = itens[0]
+            periodo_sugerido = vinc_ref.periodo_sugerido if len(itens) == 1 else None
+            periodicidade_oferta = vinc_ref.periodicidade_oferta if len(itens) == 1 else "ambos"
+
+            for snap, vinc, conc in itens:
+                cod_oficial = mapa_codigos.get((vinc.curso_codigo, vinc.conceito_id), vinc.conceito_id)
+                demanda_por_curso.append({
+                    "curso_codigo": vinc.curso_codigo,
+                    "disciplina_codigo": cod_oficial,
+                    "grupo_a_qtd": snap.grupo_a_qtd,
+                    "grupo_a_prob": snap.grupo_a_prob,
+                    "grupo_b_qtd": snap.grupo_b_qtd,
+                    "grupo_c_qtd": snap.grupo_c_qtd,
+                    "grupo_c_prob": snap.grupo_c_prob,
+                    "demanda_estimada": snap.demanda_estimada,
+                    "total_alunos": snap.grupo_a_qtd + snap.grupo_b_qtd + snap.grupo_c_qtd,
+                })
+                total_a_qtd += snap.grupo_a_qtd
+                total_a_prob += snap.grupo_a_prob
+                total_b += snap.grupo_b_qtd
+                total_c_qtd += snap.grupo_c_qtd
+                total_c_prob += snap.grupo_c_prob
+                total_alunos += (snap.grupo_a_qtd + snap.grupo_b_qtd + snap.grupo_c_qtd)
+
+            demanda_total = round(total_a_prob + total_b + total_c_prob, 2)
+            cod_ref = mapa_codigos.get((vinc_ref.curso_codigo, conc_ref.id), conc_ref.id)
+
+            resultado.append({
+                "conceito_id": conc_ref.id,
+                "disciplina_codigo": cod_ref,
+                "disciplina_nome": nome_normalizado,
+                "periodo_sugerido": periodo_sugerido,
+                "periodicidade_oferta": periodicidade_oferta,
+                "grupo_a_qtd": total_a_qtd,
+                "grupo_b_qtd": total_b,
+                "grupo_c_qtd": total_c_qtd,
+                "demanda_estimada": demanda_total,
+                "total_alunos": total_alunos,
+                "demanda_por_curso": demanda_por_curso,
+            })
+        return resultado
+
+
 @router.get("")
 def obter_demandas(
     curso_codigo: str,
@@ -352,12 +514,16 @@ def obter_demandas(
     """
     Retorna o cálculo de demanda de todas as disciplinas vinculadas ao curso no período.
 
-    Quando curso_codigo == 'TODOS', consolida todas as disciplinas de todos os cursos,
-    agrupando por nome_normalizado (RF12). Cada item do resultado inclui 'demanda_por_curso'
-    com a quebra individual por curso.
+    Prioriza o snapshot imutável salvo em DemandaSnapshot para garantir isolamento total
+    entre semestres diferentes (ex.: 2026/1 vs 2027/1) e entre usuários.
     """
     usr_id = usuario_atual.id if usuario_atual else None
     registrar_acesso(db, "consulta_demanda", f"Curso: {curso_codigo}, Periodo: {periodo_atual}", usr_id)
+
+    # 1. Verifica se existe snapshot salvo para este período e usuário
+    dados_snapshot = _obter_demandas_por_snapshot(db, curso_codigo, periodo_atual, usuario_id=usr_id)
+    if dados_snapshot is not None:
+        return dados_snapshot
 
     if curso_codigo == "TODOS":
         return _obter_demandas_todos_cursos(db, periodo_atual)
@@ -371,10 +537,7 @@ def obter_demandas(
     )
 
     if not vinculos_query:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Nenhum vínculo curricular encontrado para o curso '{curso_codigo}'",
-        )
+        return []
 
     vinculos = list(vinculos_query)
     mapa_codigos = _mapear_codigos_disciplina(db, curso_codigo)
@@ -522,7 +685,9 @@ def obter_detalhe_demanda(
 
     cod_oficial = _obter_codigo_disciplina(db, curso_codigo, conceito_id_efetivo)
 
-    if not _tem_dados_academicos(db):
+    context_cache = inicializar_context_cache(db, curso_codigo)
+
+    if not _tem_dados_academicos(db, context_cache) or not _periodo_possui_dados(db, periodo_atual, context_cache):
         ga = []
         gb = []
         gc = []
@@ -530,10 +695,10 @@ def obter_detalhe_demanda(
         prob_c = 0.0
         total = 0.0
     else:
-        periodo_cursando = obter_periodo_cursando_referencia(db, periodo_atual)
-        ga = grupo_a(db, curso_codigo, conceito_id_efetivo, periodo_cursando)
-        gb = grupo_b(db, curso_codigo, conceito_id_efetivo)
-        gc = grupo_c(db, curso_codigo, conceito_id_efetivo, periodo_cursando)
+        periodo_cursando = obter_periodo_cursando_referencia(db, periodo_atual, curso_codigo, context_cache)
+        ga = grupo_a(db, curso_codigo, conceito_id_efetivo, periodo_cursando, context_cache)
+        gb = grupo_b(db, curso_codigo, conceito_id_efetivo, context_cache)
+        gc = grupo_c(db, curso_codigo, conceito_id_efetivo, periodo_cursando, context_cache)
         prob_a = sum(aluno.probabilidade_reprovacao for aluno in ga)
         prob_c = sum(aluno.probabilidade_aprovacao for aluno in gc)
         total = prob_a + len(gb) + prob_c

@@ -67,8 +67,23 @@ from core.resolvers import resolver_conceito
 ESTADOS_APROVADO = {"aprovado"}  # ver RN04 — já normalizado pelo ETL
 
 
+STATUS_INATIVOS = [
+    "Abandono",
+    "Cancelamento",
+    "Desligamento",
+    "Falecimento",
+    "Cancelamento Sisu",
+    "Guri",
+    "Cancelamento Sisu e Guri",
+    "Formado",
+    "Transferência voluntária",
+    "Reopção de Curso",
+    "Transferência com reativação de vínculo",
+]
+
+
 def _obter_alunos_ativos_curso(db: Session, curso_codigo: str, context_cache: dict = None) -> Set[str]:
-    """RN05 — Retorna conjunto de matrículas dos alunos ativos do curso (exclui evadidos)."""
+    """RN05 — Retorna conjunto de matrículas dos alunos ativos do curso (exclui evadidos, formados e transferidos)."""
     if context_cache is not None:
         if "ativos" not in context_cache:
             context_cache["ativos"] = {}
@@ -76,27 +91,29 @@ def _obter_alunos_ativos_curso(db: Session, curso_codigo: str, context_cache: di
             return context_cache["ativos"][curso_codigo]
 
     todos_alunos = set(r[0] for r in db.query(Aluno.matricula).filter(Aluno.curso_codigo == curso_codigo).all())
-    evadidos = set(r[0] for r in db.query(Historico.aluno_matricula).filter(
+    inativos = set(r[0] for r in db.query(Historico.aluno_matricula).filter(
         Historico.curso_codigo == curso_codigo,
-        Historico.situacao_matricula.in_(["Abandono", "Cancelamento", "Desligamento", "Falecimento", "Cancelamento Sisu", "Guri"])
+        Historico.situacao_matricula.in_(STATUS_INATIVOS)
     ).distinct().all())
-    res = todos_alunos - evadidos
+    cursando_mats = set(r[0] for r in db.query(Historico.aluno_matricula).filter(
+        Historico.curso_codigo == curso_codigo,
+        Historico.situacao == "cursando",
+    ).distinct().all())
+    res = (todos_alunos - inativos) | cursando_mats
     if context_cache is not None:
         context_cache["ativos"][curso_codigo] = res
     return res
 
 
 def _aluno_esta_ativo(db: Session, matricula: str) -> bool:
-    """RN05 — Retorna False se o aluno estiver evadido no seu período mais recente."""
+    """RN05 — Retorna False se o aluno estiver evadido ou formado no seu período mais recente."""
     ultimo_historico = (
         db.query(Historico)
         .filter(Historico.aluno_matricula == matricula)
         .order_by(Historico.periodo_letivo.desc(), Historico.id.desc())
         .first()
     )
-    if ultimo_historico and ultimo_historico.situacao_matricula in {
-        "Abandono", "Cancelamento", "Desligamento", "Falecimento", "Cancelamento Sisu", "Guri"
-    }:
+    if ultimo_historico and ultimo_historico.situacao_matricula in STATUS_INATIVOS:
         return False
     return True
 
@@ -214,8 +231,11 @@ def inicializar_context_cache(db: Session, curso_codigo: str = None) -> dict:
     # 4. Pré-carrega conceitos
     for c_id, n_norm in db.query(ConceitoDisciplina.id, ConceitoDisciplina.nome_normalizado).all():
         cache["conceitos"][c_id] = n_norm
+    for n_norm in cache["conceitos"].values():
+        cache["prob_aprov"].setdefault(n_norm, 0.5)
 
     # 5. Pré-carrega pré-requisitos
+    cache["prereqs_carregados"] = True
     for p in db.query(PreRequisito).all():
         if (p.curso_codigo, p.conceito_id) not in cache["prereqs"]:
             cache["prereqs"][(p.curso_codigo, p.conceito_id)] = []
@@ -227,17 +247,30 @@ def inicializar_context_cache(db: Session, curso_codigo: str = None) -> dict:
     for m, c in todos_alunos:
         alunos_por_curso[c].add(m)
 
-    evadidos_query = db.query(Historico.aluno_matricula, Historico.curso_codigo).filter(
-        Historico.situacao_matricula.in_(["Abandono", "Cancelamento", "Desligamento", "Falecimento", "Cancelamento Sisu", "Guri"])
+    inativos_query = db.query(Historico.aluno_matricula, Historico.curso_codigo).filter(
+        Historico.situacao_matricula.in_(STATUS_INATIVOS)
     ).distinct().all()
-    evadidos_por_curso = defaultdict(set)
-    for m, c in evadidos_query:
-        evadidos_por_curso[c].add(m)
+    inativos_por_curso = defaultdict(set)
+    for m, c in inativos_query:
+        inativos_por_curso[c].add(m)
 
     for c, mats in alunos_por_curso.items():
-        cache["ativos"][c] = mats - evadidos_por_curso[c]
+        cursando_c = set(m for (curso, _, _), mats_c in cache["hist_cursando"].items() if curso == c for m in mats_c)
+        cache["ativos"][c] = (mats - inativos_por_curso[c]) | cursando_c
 
-    # 7. Identifica o período mais representativo com alunos cursando ativamente (ex.: 2026/1)
+    # 7. Identifica o período mais representativo com alunos cursando ativamente por curso e global
+    cache["periodo_cursando_por_curso"] = {}
+    cursando_por_curso = (
+        db.query(Historico.curso_codigo, Historico.periodo_letivo, func.count(Historico.id))
+        .filter(Historico.situacao == "cursando")
+        .group_by(Historico.curso_codigo, Historico.periodo_letivo)
+        .order_by(Historico.curso_codigo, func.count(Historico.id).desc())
+        .all()
+    )
+    for c_cod, p_let, _ in cursando_por_curso:
+        if c_cod not in cache["periodo_cursando_por_curso"]:
+            cache["periodo_cursando_por_curso"][c_cod] = p_let
+
     periodo_cursando_mais_recente = (
         db.query(Historico.periodo_letivo)
         .filter(Historico.situacao == "cursando")
@@ -250,40 +283,59 @@ def inicializar_context_cache(db: Session, curso_codigo: str = None) -> dict:
     return cache
 
 
-def obter_periodo_cursando_referencia(db: Session, periodo_alvo: str, context_cache: dict = None) -> str:
+def obter_periodo_cursando_referencia(db: Session, periodo_alvo: str, curso_codigo: str = None, context_cache: dict = None) -> str:
     """Retorna o período letivo a ser utilizado para identificar alunos 'cursando' (Grupos A e C).
     
-    Se o período de planejamento (periodo_alvo) tiver registros de alunos cursando no banco, usa ele próprio.
-    Caso seja um período futuro de planejamento (ex.: 2026/2, 2027/2) que ainda não teve matrículas,
-    utiliza o período letivo vigente mais recente com matrículas ativas em andamento (ex.: 2026/1).
+    1. Se o período de planejamento (periodo_alvo) tiver registros de alunos cursando no curso, usa ele próprio.
+    2. Caso o curso possua um período letivo de matrículas ativas em andamento nos históricos importados
+       (ex.: no lote do campus, ALES possui cursando registrado como 2026/2 enquanto outros cursos possuem 2026/1),
+       utiliza o período de matrículas ativas daquele curso específico para não zerar os dados.
     """
+    key = (periodo_alvo, curso_codigo or "TODOS")
+    if context_cache is not None:
+        if "periodo_cursando_cache" not in context_cache:
+            context_cache["periodo_cursando_cache"] = {}
+        if key in context_cache["periodo_cursando_cache"]:
+            return context_cache["periodo_cursando_cache"][key]
+
     formatos = _formatos_periodo(periodo_alvo)
     if context_cache is not None and "hist_cursando" in context_cache:
-        tem_cursando = any(k[2] in formatos for k in context_cache["hist_cursando"].keys())
-        if tem_cursando:
-            return periodo_alvo
-        return context_cache.get("periodo_cursando_ref") or periodo_alvo
+        if curso_codigo and curso_codigo != "TODOS":
+            tem_cursando = any(k[0] == curso_codigo and k[2] in formatos for k in context_cache["hist_cursando"].keys())
+            ref = context_cache.get("periodo_cursando_por_curso", {}).get(curso_codigo) or periodo_alvo
+        else:
+            tem_cursando = any(k[2] in formatos for k in context_cache["hist_cursando"].keys())
+            ref = context_cache.get("periodo_cursando_ref") or periodo_alvo
 
-    tem_no_db = (
-        db.query(Historico.id)
-        .filter(
+        res = periodo_alvo if tem_cursando else ref
+        context_cache["periodo_cursando_cache"][key] = res
+        return res
+
+    if curso_codigo and curso_codigo != "TODOS":
+        tem_no_db = db.query(Historico.id).filter(
+            Historico.curso_codigo == curso_codigo,
             Historico.situacao == "cursando",
             Historico.periodo_letivo.in_(formatos),
-        )
-        .first()
-        is not None
-    )
-    if tem_no_db:
-        return periodo_alvo
+        ).first() is not None
+        if tem_no_db:
+            return periodo_alvo
+        p_curso = db.query(Historico.periodo_letivo).filter(
+            Historico.curso_codigo == curso_codigo,
+            Historico.situacao == "cursando",
+        ).group_by(Historico.periodo_letivo).order_by(func.count(Historico.id).desc()).first()
+        return p_curso[0] if p_curso else periodo_alvo
+    else:
+        tem_no_db = db.query(Historico.id).filter(
+            Historico.situacao == "cursando",
+            Historico.periodo_letivo.in_(formatos),
+        ).first() is not None
+        if tem_no_db:
+            return periodo_alvo
+        p_global = db.query(Historico.periodo_letivo).filter(
+            Historico.situacao == "cursando",
+        ).group_by(Historico.periodo_letivo).order_by(func.count(Historico.id).desc()).first()
+        return p_global[0] if p_global else periodo_alvo
 
-    periodos_cursando = (
-        db.query(Historico.periodo_letivo)
-        .filter(Historico.situacao == "cursando")
-        .group_by(Historico.periodo_letivo)
-        .order_by(func.count(Historico.id).desc())
-        .first()
-    )
-    return periodos_cursando[0] if periodos_cursando else periodo_alvo
 
 
 def _obter_passaram_disciplina(db: Session, curso_codigo: str, pre_nome: str, context_cache: dict = None) -> Set[str]:
@@ -477,14 +529,17 @@ def grupo_b(db: Session, curso_codigo: str, conceito_id: str, context_cache: dic
         if "prereqs" not in context_cache:
             context_cache["prereqs"] = {}
         if (curso_codigo, conceito_id) not in context_cache["prereqs"]:
-            context_cache["prereqs"][(curso_codigo, conceito_id)] = (
-                db.query(PreRequisito)
-                .filter(
-                    PreRequisito.curso_codigo == curso_codigo,
-                    PreRequisito.conceito_id == conceito_id,
+            if context_cache.get("prereqs_carregados"):
+                context_cache["prereqs"][(curso_codigo, conceito_id)] = []
+            else:
+                context_cache["prereqs"][(curso_codigo, conceito_id)] = (
+                    db.query(PreRequisito)
+                    .filter(
+                        PreRequisito.curso_codigo == curso_codigo,
+                        PreRequisito.conceito_id == conceito_id,
+                    )
+                    .all()
                 )
-                .all()
-            )
         pre_requisitos = context_cache["prereqs"][(curso_codigo, conceito_id)]
     else:
         pre_requisitos = (
@@ -574,14 +629,17 @@ def grupo_c(db: Session, curso_codigo: str, conceito_id: str, periodo_atual: str
         if "prereqs" not in context_cache:
             context_cache["prereqs"] = {}
         if (curso_codigo, conceito_id) not in context_cache["prereqs"]:
-            context_cache["prereqs"][(curso_codigo, conceito_id)] = (
-                db.query(PreRequisito)
-                .filter(
-                    PreRequisito.curso_codigo == curso_codigo,
-                    PreRequisito.conceito_id == conceito_id,
+            if context_cache.get("prereqs_carregados"):
+                context_cache["prereqs"][(curso_codigo, conceito_id)] = []
+            else:
+                context_cache["prereqs"][(curso_codigo, conceito_id)] = (
+                    db.query(PreRequisito)
+                    .filter(
+                        PreRequisito.curso_codigo == curso_codigo,
+                        PreRequisito.conceito_id == conceito_id,
+                    )
+                    .all()
                 )
-                .all()
-            )
         pre_requisitos = context_cache["prereqs"][(curso_codigo, conceito_id)]
     else:
         pre_requisitos = (

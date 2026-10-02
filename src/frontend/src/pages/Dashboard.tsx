@@ -97,13 +97,19 @@ export default function Dashboard({
   // Estados de Gestão de Semestres (Criar e Excluir)
   const [showNovoSemestreModal, setShowNovoSemestreModal] = useState(false);
   const [showExcluirSemestreModal, setShowExcluirSemestreModal] = useState(false);
-  const [novoAno, setNovoAno] = useState<string>("2026");
-  const [novoSemestreNum, setNovoSemestreNum] = useState<string>("2");
+  const [novoAno, setNovoAno] = useState<string>(new Date().getFullYear().toString());
+  const [novoSemestreNum, setNovoSemestreNum] = useState<string>("1");
   const [novoDescricao, setNovoDescricao] = useState<string>("");
   const [novoSemestreError, setNovoSemestreError] = useState<string | null>(null);
   const [novoSemestreLoading, setNovoSemestreLoading] = useState(false);
   const [excluirSemestreLoading, setExcluirSemestreLoading] = useState(false);
   const [excluirSemestreError, setExcluirSemestreError] = useState<string | null>(null);
+
+  // Feedback após conclusão da importação (RF01, RF02)
+  const [importFeedback, setImportFeedback] = useState<string | null>(null);
+
+  // Mensagem/alerta após criação de novo semestre
+  const [novoSemestreCriadoMsg, setNovoSemestreCriadoMsg] = useState<{ codigo: string; texto: string } | null>(null);
 
   // Busca a lista de períodos dinamicamente
   const fetchPeriodos = async () => {
@@ -114,10 +120,15 @@ export default function Dashboard({
       if (response.ok) {
         const data: PeriodoInfo[] = await response.json();
         setPeriodosList(data);
-        // Se o período selecionado não existe na lista retornada, escolhe o atual
-        if (data.length > 0 && !data.some(p => p.codigo === periodo)) {
-          const atual = data.find(p => p.is_atual) || data[0];
-          setPeriodo(atual.codigo);
+        if (data.length > 0) {
+          if (!data.some(p => p.codigo === periodo)) {
+            const atual = data.find(p => p.is_atual) || data[0];
+            setPeriodo(atual.codigo);
+          }
+        } else {
+          setPeriodo("");
+          setDemandas([]);
+          setLoading(false);
         }
       }
     } catch {
@@ -146,6 +157,11 @@ export default function Dashboard({
 
 
   const fetchDemandas = async () => {
+    if (!periodo) {
+      setDemandas([]);
+      setLoading(false);
+      return;
+    }
     if (demandas.length === 0) {
       setLoading(true);
     }
@@ -209,14 +225,19 @@ export default function Dashboard({
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedHistoricos || selectedHistoricos.length === 0) {
-      setUploadError("Selecione pelo menos um arquivo CSV de histórico escolar.");
+    setUploadError(null);
+    setUploadSuccess(null);
+
+    // Validação estrita: exige no mínimo 6 arquivos CSV de histórico escolar (um para cada curso do campus)
+    if (!selectedHistoricos || selectedHistoricos.length < 6) {
+      const qtd = selectedHistoricos ? selectedHistoricos.length : 0;
+      setUploadError(
+        `Ação não permitida: Não é possível processar apenas ${qtd} arquivo(s). É obrigatório selecionar no mínimo 6 arquivos CSV de histórico escolar (um para cada um dos 6 cursos disponíveis: ALEA, ALEC, ALEE, ALEM, ALES e ALET). A importação parcial foi cancelada para proteger a integridade dos dados e semestres anteriores.`
+      );
       return;
     }
 
     setUploadLoading(true);
-    setUploadError(null);
-    setUploadSuccess(null);
 
     const formData = new FormData();
     for (let i = 0; i < selectedHistoricos.length; i++) {
@@ -224,6 +245,9 @@ export default function Dashboard({
     }
     if (selectedCurriculo) {
       formData.append("curriculo", selectedCurriculo);
+    }
+    if (periodo) {
+      formData.append("periodo", periodo);
     }
 
     try {
@@ -241,20 +265,25 @@ export default function Dashboard({
       }
 
       const resData = await response.json();
-      setUploadSuccess(
-        `✓ Sucesso! ${resData.total_linhas_historico.toLocaleString()} linhas e ${resData.total_alunos.toLocaleString()} alunos processados em ${resData.tempo_segundos}s.`
+
+      // Fecha a janela de importação imediatamente (Requisito 1)
+      setShowUploadModal(false);
+      setSelectedHistoricos(null);
+      setSelectedCurriculo(null);
+      setUploadError(null);
+      setUploadSuccess(null);
+
+      // Apresenta feedback de importação concluída no painel (Requisito 1)
+      setImportFeedback(
+        resData.mensagem || "Importação concluída com sucesso!"
       );
+
+      // Se havia aviso de semestre recém-criado, limpa-o pois os novos dados foram importados
+      setNovoSemestreCriadoMsg(null);
 
       // Recarrega as estimativas e períodos da tela
       await fetchDemandas();
       await fetchPeriodos();
-
-      setTimeout(() => {
-        setShowUploadModal(false);
-        setUploadSuccess(null);
-        setSelectedHistoricos(null);
-        setSelectedCurriculo(null);
-      }, 3500);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Erro de conexão durante o upload.");
     } finally {
@@ -291,6 +320,12 @@ export default function Dashboard({
       setPeriodo(codigo);
       setShowNovoSemestreModal(false);
       setNovoDescricao("");
+
+      // Emite mensagem após criação de semestre de que o usuário deve importar os novos dados (Requisito 3)
+      setNovoSemestreCriadoMsg({
+        codigo,
+        texto: `O semestre ${codigo} foi criado com sucesso. Como os dados apresentados inicialmente ainda não refletem este período, você deve importar os novos dados de histórico escolar deste semestre recém-criado.`
+      });
     } catch (err) {
       setNovoSemestreError(err instanceof Error ? err.message : "Erro ao criar semestre.");
     } finally {
@@ -315,6 +350,8 @@ export default function Dashboard({
         throw new Error(errData.detail || "Erro ao excluir semestre.");
       }
 
+      const outro = periodosList.find(p => p.codigo !== periodo)?.codigo || "2026/1";
+      setPeriodo(outro);
       await fetchPeriodos();
       setShowExcluirSemestreModal(false);
     } catch (err) {
@@ -444,7 +481,7 @@ export default function Dashboard({
                     type="button"
                     className="btn-period-action btn-delete-period"
                     title={`Excluir Semestre ${periodo}`}
-                    disabled={periodosList.length <= 1}
+                    disabled={periodosList.length === 0}
                     onClick={() => setShowExcluirSemestreModal(true)}
                   >
                     🗑️ Excluir
@@ -455,6 +492,7 @@ export default function Dashboard({
                 id="select-periodo"
                 value={periodo}
                 onChange={(e) => setPeriodo(e.target.value)}
+                disabled={periodosList.length === 0}
               >
                 {periodosList.map((p) => (
                   <option key={p.codigo} value={p.codigo}>
@@ -462,7 +500,7 @@ export default function Dashboard({
                   </option>
                 ))}
                 {periodosList.length === 0 && (
-                  <option value="2026/1">2026/1 (Semestre Regular Atual)</option>
+                  <option value="">Nenhum semestre cadastrado</option>
                 )}
               </select>
             </div>
@@ -479,6 +517,63 @@ export default function Dashboard({
         {error && (
           <div className="dashboard-error-box">
             <strong>Ocorreu um erro:</strong> {error}
+          </div>
+        )}
+
+        {/* Feedback de importação concluída (Requisito 1) */}
+        {importFeedback && (
+          <div className={`import-feedback-banner ${importFeedback.includes("Atenção") || importFeedback.includes("⚠️") || importFeedback.includes("aviso") ? "import-feedback-warning" : ""}`}>
+            <div className="import-feedback-content">
+              <span className="import-feedback-icon">
+                {importFeedback.includes("Atenção") || importFeedback.includes("⚠️") || importFeedback.includes("aviso") ? "⚠️" : "✅"}
+              </span>
+              <div>
+                <strong>
+                  {importFeedback.includes("Atenção") || importFeedback.includes("⚠️") || importFeedback.includes("aviso")
+                    ? "Importação de Dados Concluída (com observações)"
+                    : "Importação de Dados Concluída"}
+                </strong>
+                <p>{importFeedback}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="import-feedback-close"
+              onClick={() => setImportFeedback(null)}
+              title="Fechar aviso"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Mensagem após criação de novo semestre (Requisito 3) */}
+        {novoSemestreCriadoMsg && (
+          <div className="semester-new-alert-banner">
+            <div className="semester-new-alert-content">
+              <span className="semester-new-alert-icon">⚠️</span>
+              <div>
+                <strong>Atenção: Novo Semestre {novoSemestreCriadoMsg.codigo} Criado</strong>
+                <p>{novoSemestreCriadoMsg.texto}</p>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setShowUploadModal(true)}
+              >
+                📥 Importar Dados do Semestre
+              </button>
+              <button
+                type="button"
+                className="semester-new-alert-close"
+                onClick={() => setNovoSemestreCriadoMsg(null)}
+                title="Fechar aviso"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         )}
 
@@ -563,20 +658,35 @@ export default function Dashboard({
             </button>
           </div>
 
-          {tipoFiltro === "optativas" && (
-            <div className="optativas-info-note">
-              <span>💡</span>
-              <div>
-                <strong>Sobre as disciplinas optativas:</strong> Como não possuem turmas regulares obrigatórias na grade, os Grupos A (cursando) e C (cursando pré-requisito) são normalmente zero. A demanda total reflete os alunos do <strong>Grupo B (aptos)</strong> que já possuem os pré-requisitos necessários para cursá-las.
-              </div>
-            </div>
-          )}
-
           {loading ? (
             <div className="table-loading-container">
               <div className="loading-spinner-circle"></div>
               <p className="loading-title">Calculando estimativas do período {periodo}...</p>
               <span className="loading-sub">Avaliando alunos nos Grupos A (cursando), B (aptos) e C (potenciais)</span>
+            </div>
+          ) : periodosList.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "4rem 2rem", background: "#f8fafc", borderRadius: "8px", margin: "1rem 0" }}>
+              <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }}>🗓️</div>
+              <h3 style={{ color: "#0f766e", marginBottom: "0.5rem" }}>Nenhum semestre cadastrado ainda</h3>
+              <p style={{ color: "#64748b", maxWidth: "560px", margin: "0 auto 1.5rem auto", lineHeight: "1.6" }}>
+                Você está em seu painel exclusivo de coordenação. Como você ainda não possui semestres letivos cadastrados, cadastre um novo semestre oficial de planejamento ou realize a importação dos históricos escolares dos cursos.
+              </p>
+              <div style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setShowNovoSemestreModal(true)}
+                >
+                  ➕ Cadastrar Primeiro Semestre
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowUploadModal(true)}
+                >
+                  📥 Importar Históricos Escolares
+                </button>
+              </div>
             </div>
           ) : demandasExibidas.length === 0 ? (
             <div className="table-empty">Nenhuma disciplina encontrada para esta categoria de filtro.</div>
@@ -597,12 +707,13 @@ export default function Dashboard({
                   </tr>
                 </thead>
                 <tbody>
-                  {demandasExibidas.map((item) => {
+                  {demandasExibidas.map((item, idx) => {
                     const isCompartilhada = item.demanda_por_curso && item.demanda_por_curso.length > 1;
                     const isExpandida = expandidos.has(item.conceito_id);
+                    const rowKey = `${item.conceito_id}-${item.disciplina_codigo || idx}`;
 
                     return (
-                      <React.Fragment key={item.conceito_id}>
+                      <React.Fragment key={rowKey}>
                         <tr
                           onClick={(e) => {
                             if (curso === "TODOS" && isCompartilhada) {
@@ -704,9 +815,9 @@ export default function Dashboard({
               <div className="modal-body">
                 <div className="upload-section">
                   <label className="upload-label" htmlFor="upload-historicos">
-                    <strong>1. Arquivos de Histórico Escolar (.csv) *</strong>
+                    <strong>1. Arquivos de Histórico Escolar (.csv) — Mínimo de 6 arquivos obrigatórios *</strong>
                     <span className="upload-hint">
-                      Selecione um ou múltiplos arquivos CSV de histórico escolar (ex.: históricos dos cursos de Engenharia).
+                      Selecione todos os 6 arquivos CSV de histórico escolar (um para cada um dos 6 cursos: ALEA, ALEC, ALEE, ALEM, ALES e ALET). O sistema não aceita importações parciais com menos de 6 arquivos para não corromper semestres anteriores.
                     </span>
                   </label>
                   <input
@@ -716,11 +827,18 @@ export default function Dashboard({
                     accept=".csv,.xlsx,.xls"
                     className="upload-input"
                     disabled={uploadLoading}
-                    onChange={(e) => setSelectedHistoricos(e.target.files)}
+                    onChange={(e) => {
+                      setSelectedHistoricos(e.target.files);
+                      setUploadError(null);
+                    }}
                   />
-                  {selectedHistoricos && selectedHistoricos.length > 0 && (
-                    <div className="upload-file-count">
-                      ✓ {selectedHistoricos.length} arquivo(s) selecionado(s) para importação
+                  {selectedHistoricos && (
+                    <div className={selectedHistoricos.length >= 6 ? "upload-file-count" : "upload-file-warning"}>
+                      {selectedHistoricos.length >= 6 ? (
+                        <>✓ {selectedHistoricos.length} arquivos selecionados (mínimo de 6 arquivos atendido)</>
+                      ) : (
+                        <>⚠️ {selectedHistoricos.length} arquivo(s) selecionado(s). É obrigatório selecionar no mínimo 6 arquivos (um por curso).</>
+                      )}
                     </div>
                   )}
                 </div>
@@ -745,13 +863,6 @@ export default function Dashboard({
                       ✓ Matriz curricular selecionada: {selectedCurriculo.name}
                     </div>
                   )}
-                </div>
-
-                <div className="upload-benchmark-note">
-                  <span className="note-icon">⏱️</span>
-                  <span>
-                    <strong>Desempenho:</strong> O processamento completo de mais de 200.000 registros ocorre em <strong>~45 segundos</strong> (muito abaixo do limite de 4 minutos).
-                  </span>
                 </div>
 
                 {uploadError && (
@@ -840,15 +951,11 @@ export default function Dashboard({
                     id="input-novo-desc"
                     type="text"
                     className="form-control"
-                    placeholder="Ex.: Semestre Regular 2026/2"
+                    placeholder="Ex.: Semestre Regular"
                     value={novoDescricao}
                     onChange={(e) => setNovoDescricao(e.target.value)}
                     disabled={novoSemestreLoading}
                   />
-                </div>
-
-                <div className="semester-preview-badge mt-3">
-                  Período a ser cadastrado: <strong>{novoAno}/{novoSemestreNum}</strong>
                 </div>
 
                 {novoSemestreError && (
@@ -893,7 +1000,7 @@ export default function Dashboard({
               <div className="delete-warning-box">
                 <span className="warning-icon">⚠️</span>
                 <div>
-                  <strong>Atenção!</strong> Esta operação é irreversível e deve ser usada caso você tenha subido dados de teste ou um arquivo incorreto.
+                  <strong>Atenção!</strong> Esta operação é irreversível e deve ser usada caso você tenha subido um arquivo incorreto.
                 </div>
               </div>
 

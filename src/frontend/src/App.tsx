@@ -2,25 +2,36 @@ import { useEffect, useState } from "react";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Detalhe from "./pages/Detalhe";
+import DefinirSenha from "./pages/DefinirSenha";
 import "./App.css";
 
-type Page = "login" | "dashboard" | "detalhe";
+type Page = "login" | "definir-senha" | "dashboard" | "detalhe";
 
 import ErrorBoundary from "./components/ErrorBoundary";
 
 function App() {
   const [token, setToken] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>("login");
+  const [tokenAtivacao, setTokenAtivacao] = useState<string | null>(null);
   const [selectedConceitoId, setSelectedConceitoId] = useState<string | null>(null);
-  const [curso, setCurso] = useState<string>("ALES");
-  const [periodo, setPeriodo] = useState<string>("2026/1");
-  const [cursoCodigo, setCursoCodigo] = useState<string>("ALES");
+  const [curso, setCurso] = useState<string>("TODOS");
+  const [periodo, setPeriodo] = useState<string>("");
+  const [cursoCodigo, setCursoCodigo] = useState<string>("TODOS");
   const [demandas, setDemandas] = useState<any[]>([]);
   const [periodosList, setPeriodosList] = useState<any[]>([]);
   const [cursos, setCursos] = useState<any[]>([]);
 
   useEffect(() => {
-    // Tenta carregar a sessão do localStorage
+    // 1. Verifica se há token de ativação/definição de senha na URL
+    const params = new URLSearchParams(window.location.search);
+    const tok = params.get("token");
+    if (tok || window.location.pathname.includes("definir-senha")) {
+      if (tok) setTokenAtivacao(tok);
+      setCurrentPage("definir-senha");
+      return;
+    }
+
+    // 2. Tenta carregar a sessão do localStorage
     const savedToken = localStorage.getItem("token");
     if (savedToken) {
       setToken(savedToken);
@@ -39,6 +50,9 @@ function App() {
     setToken(null);
     setCurrentPage("login");
     setSelectedConceitoId(null);
+    setPeriodosList([]);
+    setDemandas([]);
+    setPeriodo("");
   };
 
   const handleSelectDisciplina = (conceitoId: string, itemCursoCodigo: string, itemPeriodo: string) => {
@@ -62,7 +76,17 @@ function App() {
   return (
     <ErrorBoundary>
       {currentPage === "login" && (
-        <Login onLoginSuccess={handleLoginSuccess} />
+        <Login
+          onLoginSuccess={handleLoginSuccess}
+        />
+      )}
+
+      {currentPage === "definir-senha" && (
+        <DefinirSenha
+          initialToken={tokenAtivacao}
+          onLoginSuccess={handleLoginSuccess}
+          onVoltarLogin={() => setCurrentPage("login")}
+        />
       )}
       
       {currentPage === "dashboard" && token && (

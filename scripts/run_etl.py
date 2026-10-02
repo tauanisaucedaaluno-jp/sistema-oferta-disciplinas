@@ -82,11 +82,11 @@ def encontrar_arquivos(modo_raw: bool):
 
         # 2. Busca históricos
         if os.path.exists(dir_hist):
-            arquivos_historico = sorted(glob.glob(os.path.join(dir_hist, "*.csv")))
+            arquivos_historico = sorted([f for f in glob.glob(os.path.join(dir_hist, "*.csv")) if "historico_cc" not in f])
         else:
             arquivos_historico = sorted([
                 f for f in glob.glob(os.path.join(dir_raw, "*.csv"))
-                if "hist" in os.path.basename(f).lower()
+                if "hist" in os.path.basename(f).lower() and "historico_cc" not in f
             ])
 
         if not arquivos_historico:

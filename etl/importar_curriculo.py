@@ -1,6 +1,7 @@
 """
 ETL de importação do CSV de currículo/matriz curricular (RF01).
 """
+import os
 import re
 import unicodedata
 from typing import Dict, List, Set, Tuple
@@ -63,11 +64,30 @@ def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def ler_csv_curriculo(caminho: str) -> pd.DataFrame:
-    """Abre o CSV com separador ';' e encoding 'utf-8' ou 'latin-1'."""
+    """Abre o CSV com suporte a múltiplos encodings e delimitadores (';', ',', '\\t')."""
+    ext = os.path.splitext(caminho)[1].lower()
+    if ext in ['.xlsx', '.xls']:
+        df = pd.read_excel(caminho)
+        return normalizar_colunas(df)
+
+    encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    separators = [';', ',', '\t']
+
+    for enc in encodings:
+        for sep in separators:
+            try:
+                df_test = pd.read_csv(caminho, sep=sep, encoding=enc, nrows=10, dtype=str)
+                if len(df_test.columns) > 3:
+                    df = pd.read_csv(caminho, sep=sep, encoding=enc, dtype=str)
+                    return normalizar_colunas(df)
+            except Exception:
+                continue
+
+    # Fallback
     try:
-        df = pd.read_csv(caminho, sep=';', encoding='utf-8')
-    except (UnicodeDecodeError, ValueError):
-        df = pd.read_csv(caminho, sep=';', encoding='latin-1')
+        df = pd.read_csv(caminho, sep=';', encoding='utf-8', dtype=str)
+    except Exception:
+        df = pd.read_csv(caminho, sep=';', encoding='latin-1', dtype=str)
     return normalizar_colunas(df)
 
 
@@ -138,19 +158,17 @@ def construir_conceitos(db: Session, df_curriculo: pd.DataFrame, df_historico: p
     disciplinas_info: Dict[Tuple[str, str], str] = {}
     
     # Do currículo
-    for _, row in df_curriculo.iterrows():
-        curso = str(row['cod_curso'])
-        codigo = str(row['cod_disciplina'])
-        nome = str(row['nome_disciplina'])
-        disciplinas_info[(curso, codigo)] = nome
+    for row in df_curriculo[['cod_curso', 'cod_disciplina', 'nome_disciplina']].itertuples(index=False):
+        disciplinas_info[(str(row[0]), str(row[1]))] = str(row[2])
         
     # Do histórico
     col_hist_cod = 'cod_ativ_curric' if 'cod_ativ_curric' in df_historico.columns else 'disciplina_codigo'
     col_hist_nome = 'nome_ativ_curric' if 'nome_ativ_curric' in df_historico.columns else 'nome_disciplina'
-    for _, row in df_historico.iterrows():
-        curso = str(row['cod_curso'])
-        codigo = str(row[col_hist_cod])
-        nome = str(row[col_hist_nome])
+    df_hist_disc = df_historico[['cod_curso', col_hist_cod, col_hist_nome]].drop_duplicates()
+    for row in df_hist_disc.itertuples(index=False):
+        curso = str(row[0])
+        codigo = str(row[1])
+        nome = str(row[2])
         if (curso, codigo) not in disciplinas_info:
             disciplinas_info[(curso, codigo)] = nome
 
@@ -220,20 +238,26 @@ def construir_conceitos(db: Session, df_curriculo: pd.DataFrame, df_historico: p
     db.commit()
 
     # 6. Salva os códigos brutos de tradução no banco
+    curr_lookup = {}
+    for row in df_curriculo.itertuples(index=False):
+        c = str(getattr(row, 'cod_curso'))
+        d = str(getattr(row, 'cod_disciplina'))
+        curr_lookup[(c, d)] = row
+
     cods_existentes = set((r[0], r[1]) for r in db.query(CodigoDisciplina.codigo, CodigoDisciplina.curso_codigo).all())
     novos_codigos = []
     for (curso, codigo), c_id in mapeamento_codigo_conceito.items():
-        match = df_curriculo[(df_curriculo['cod_curso'] == curso) & (df_curriculo['cod_disciplina'] == codigo)]
-        versao = None
+        match = curr_lookup.get((curso, codigo))
+        versao = 2023
         situacao = "CORRENTE"
         
-        if not match.empty:
-            col_versao = 'num_versao' if 'num_versao' in match.columns else ('versao' if 'versao' in match.columns else None)
+        if match is not None:
+            col_versao = 'num_versao' if hasattr(match, 'num_versao') else ('versao' if hasattr(match, 'versao') else None)
             if col_versao:
-                v_str = str(match.iloc[0][col_versao])
+                v_str = str(getattr(match, col_versao))
                 num_match = re.search(r'\d+', v_str)
                 versao = int(num_match.group(0)) if num_match else 2023
-            situacao = str(match.iloc[0]['situacao']) if 'situacao' in match.columns else "CORRENTE"
+            situacao = str(getattr(match, 'situacao')) if hasattr(match, 'situacao') else "CORRENTE"
 
         if (codigo, curso) not in cods_existentes:
             novos_codigos.append(CodigoDisciplina(
@@ -254,17 +278,22 @@ def construir_conceitos(db: Session, df_curriculo: pd.DataFrame, df_historico: p
 def montar_vinculos_curriculares(db: Session, df_curriculo: pd.DataFrame, conceitos: Dict[Tuple[str, str], str]):
     """Cria os registros de VinculoCurricular para as disciplinas da grade."""
     vinculos_a_criar = {}
-    for _, row in df_curriculo.iterrows():
-        curso = str(row['cod_curso'])
-        codigo = str(row['cod_disciplina'])
+    col_p_ideal = 'periodo_ideal' if 'periodo_ideal' in df_curriculo.columns else None
+    cols = ['cod_curso', 'cod_disciplina'] + ([col_p_ideal] if col_p_ideal else [])
+    
+    for row in df_curriculo[cols].itertuples(index=False):
+        curso = str(row[0])
+        codigo = str(row[1])
         c_id = conceitos.get((curso, codigo))
         if not c_id:
             continue
-        periodo_ideal = row['periodo_ideal']
-        try:
-            p_ideal = int(float(periodo_ideal)) if pd.notna(periodo_ideal) else None
-        except (ValueError, TypeError):
-            p_ideal = None
+        p_ideal = None
+        if col_p_ideal and len(row) > 2:
+            periodo_ideal = row[2]
+            try:
+                p_ideal = int(float(periodo_ideal)) if pd.notna(periodo_ideal) else None
+            except (ValueError, TypeError):
+                p_ideal = None
         
         chave = (curso, c_id)
         if chave not in vinculos_a_criar:
@@ -273,17 +302,30 @@ def montar_vinculos_curriculares(db: Session, df_curriculo: pd.DataFrame, concei
             if p_ideal is not None and (vinculos_a_criar[chave] is None or p_ideal < vinculos_a_criar[chave]):
                 vinculos_a_criar[chave] = p_ideal
 
-    vinculos_existentes = set((r[0], r[1]) for r in db.query(VinculoCurricular.curso_codigo, VinculoCurricular.conceito_id).all())
+    # 1. Remove do banco qualquer vínculo que não pertença à grade oficial do currículo
+    todos_vinculos_db = db.query(VinculoCurricular).all()
+    for v in todos_vinculos_db:
+        if (v.curso_codigo, v.conceito_id) not in vinculos_a_criar:
+            db.delete(v)
+    db.commit()
+
+    # 2. Atualiza ou insere vínculos curriculares oficiais
+    vinculos_existentes = {
+        (v.curso_codigo, v.conceito_id): v for v in db.query(VinculoCurricular).all()
+    }
     novos_vinculos = []
     for (curso, c_id), p_ideal in vinculos_a_criar.items():
-        if (curso, c_id) not in vinculos_existentes:
+        if (curso, c_id) in vinculos_existentes:
+            v_exist = vinculos_existentes[(curso, c_id)]
+            if p_ideal is not None and v_exist.periodo_sugerido != p_ideal:
+                v_exist.periodo_sugerido = p_ideal
+        else:
             novos_vinculos.append(VinculoCurricular(
                 curso_codigo=curso,
                 conceito_id=c_id,
                 periodo_sugerido=p_ideal,
                 periodicidade_oferta=None
             ))
-            vinculos_existentes.add((curso, c_id))
 
     if novos_vinculos:
         db.bulk_save_objects(novos_vinculos)
@@ -296,15 +338,15 @@ def montar_pre_requisitos(db: Session, df_curriculo: pd.DataFrame, conceitos: Di
         return
         
     prereqs_a_criar = set()
-    for _, row in df_curriculo.iterrows():
-        curso = str(row['cod_curso'])
-        codigo = str(row['cod_disciplina'])
+    for row in df_curriculo[['cod_curso', 'cod_disciplina', 'pre_requisitos']].itertuples(index=False):
+        curso = str(row[0])
+        codigo = str(row[1])
         c_id = conceitos.get((curso, codigo))
         
         if not c_id:
             continue
             
-        prereqs_str = row['pre_requisitos']
+        prereqs_str = row[2]
         if pd.isna(prereqs_str) or not isinstance(prereqs_str, str):
             continue
             

@@ -192,3 +192,61 @@ def test_periodo_sem_dados_demanda_zerada(client_and_db):
     assert item["demanda_estimada"] == 0.0
     assert item["total_alunos"] == 0
 
+
+def test_isolamento_demandas_entre_periodos(client_and_db):
+    """Garante que a demanda de um período anterior (2026/1) não é afetada pela criação de 2027/1."""
+    client, session = client_and_db
+    from db.models import DemandaSnapshot
+
+    # Salva snapshot para 2026/1
+    snap_26 = DemandaSnapshot(
+        periodo_codigo="2026/1",
+        curso_codigo="CC",
+        conceito_id="CC-CALC1",
+        grupo_a_qtd=5,
+        grupo_b_qtd=10,
+        grupo_c_qtd=2,
+        grupo_a_prob=2.5,
+        grupo_c_prob=1.4,
+        demanda_estimada=13.9,
+    )
+    session.add(snap_26)
+    session.commit()
+
+    # Cria o período 2027/1 e seu próprio snapshot com dados diferentes
+    client.post("/demanda/periodos", json={"periodo": "2027/1", "descricao": "Semestre 2027/1"})
+    snap_27 = DemandaSnapshot(
+        periodo_codigo="2027/1",
+        curso_codigo="CC",
+        conceito_id="CC-CALC1",
+        grupo_a_qtd=25,
+        grupo_b_qtd=50,
+        grupo_c_qtd=12,
+        grupo_a_prob=12.5,
+        grupo_c_prob=8.4,
+        demanda_estimada=70.9,
+    )
+    session.add(snap_27)
+    session.commit()
+
+    # Consulta 2026/1: deve retornar exatamente os dados originais de 2026/1
+    res_26 = client.get("/demanda?curso_codigo=CC&periodo_atual=2026/1")
+    assert res_26.status_code == 200
+    dados_26 = res_26.json()
+    item_26 = next(d for d in dados_26 if d["conceito_id"] == "CC-CALC1")
+    assert item_26["grupo_a_qtd"] == 5
+    assert item_26["grupo_b_qtd"] == 10
+    assert item_26["grupo_c_qtd"] == 2
+    assert item_26["demanda_estimada"] == 13.9
+
+    # Consulta 2027/1: deve retornar os dados de 2027/1
+    res_27 = client.get("/demanda?curso_codigo=CC&periodo_atual=2027/1")
+    assert res_27.status_code == 200
+    dados_27 = res_27.json()
+    item_27 = next(d for d in dados_27 if d["conceito_id"] == "CC-CALC1")
+    assert item_27["grupo_a_qtd"] == 25
+    assert item_27["grupo_b_qtd"] == 50
+    assert item_27["grupo_c_qtd"] == 12
+    assert item_27["demanda_estimada"] == 70.9
+
+

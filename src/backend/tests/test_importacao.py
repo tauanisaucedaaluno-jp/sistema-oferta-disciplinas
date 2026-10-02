@@ -96,7 +96,7 @@ def test_upload_historico_e_curriculo(client_and_db):
     ]
     curriculo_file = ("curriculo", ("curriculo.csv", io.BytesIO(CSV_CURRICULO_TESTE.encode("utf-8")), "text/csv"))
 
-    response = client.post("/importacao/upload", files=files + [curriculo_file])
+    response = client.post("/importacao/upload?ignorar_minimo=true", files=files + [curriculo_file])
     assert response.status_code == 200, response.text
     data = response.json()
 
@@ -112,6 +112,19 @@ def test_upload_historico_e_curriculo(client_and_db):
     assert session.query(ConceitoDisciplina).count() > 0
 
 
+def test_upload_menos_de_seis_arquivos_rejeitado(client_and_db):
+    """Garante que tentar enviar menos de 6 arquivos de histórico é rejeitado com status 400."""
+    client, session = client_and_db
+
+    files = [
+        ("historicos", ("historico_cc.csv", io.BytesIO(CSV_HISTORICO_TESTE.encode("utf-8")), "text/csv")),
+    ]
+    response = client.post("/importacao/upload", files=files)
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "no mínimo 6 arquivos" in detail
+
+
 def test_upload_sem_arquivos(client_and_db):
     client, session = client_and_db
     response = client.post("/importacao/upload", files=[])
@@ -124,7 +137,7 @@ def test_upload_arquivo_invalido(client_and_db):
     files = [
         ("historicos", ("arquivo_executavel.exe", io.BytesIO(b"dummy binary"), "application/octet-stream")),
     ]
-    response = client.post("/importacao/upload", files=files)
+    response = client.post("/importacao/upload?ignorar_minimo=true", files=files)
     assert response.status_code == 400
     assert "Apenas arquivos .csv ou .xlsx" in response.json()["detail"]
 
@@ -146,7 +159,7 @@ def test_upload_com_filtro_ano_corte(client_and_db, monkeypatch):
     ]
     curriculo_file = ("curriculo", ("curriculo.csv", io.BytesIO(CSV_CURRICULO_TESTE.encode("utf-8")), "text/csv"))
 
-    response = client.post("/importacao/upload", files=files + [curriculo_file])
+    response = client.post("/importacao/upload?ignorar_minimo=true", files=files + [curriculo_file])
     assert response.status_code == 200
     data = response.json()
 

@@ -30,6 +30,7 @@ from sqlalchemy import (
     DateTime,
     Boolean,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -174,6 +175,13 @@ class Historico(Base):
     situacao = Column(String, nullable=False)
     situacao_matricula = Column(String, nullable=True)  # RN05 — Aluno Regular, Abandono etc.
 
+    __table_args__ = (
+        Index("ix_historico_curso_disciplina", "curso_codigo", "disciplina_codigo"),
+        Index("ix_historico_aluno_matricula", "aluno_matricula"),
+        Index("ix_historico_periodo_situacao", "periodo_letivo", "situacao"),
+        Index("ix_historico_situacao", "situacao"),
+    )
+
 
 class Usuario(Base):
     """
@@ -190,8 +198,8 @@ class Usuario(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String, unique=True, nullable=False, index=True)
-    # Hash da senha (passlib/bcrypt) — nunca texto plano (RNF01)
-    senha_hash = Column(String, nullable=False)
+    # Hash da senha (passlib/bcrypt) — pode ser nulo antes da definição de senha (RNF01)
+    senha_hash = Column(String, nullable=True)
     papel = Column(String, nullable=False, default="coordenador")  # RBAC simples
     ativo = Column(Boolean, default=True, nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
@@ -212,15 +220,47 @@ class LogAcesso(Base):
 class PeriodoLetivo(Base):
     """
     Registro explícito de períodos letivos gerenciados pela coordenação (ex.: 2026/1, 2026/2).
-    Permite criar novos semestres e gerenciar o ciclo de planejamento e exclusão.
+    Isolado por usuário (coordenador): cada usuário possui sua própria visão e lista de semestres.
     """
 
     __tablename__ = "periodo_letivo"
 
-    codigo = Column(String, primary_key=True)  # ex.: "2026/1"
+    usuario_id = Column(Integer, ForeignKey("usuario.id"), primary_key=True, nullable=False, default=1)
+    codigo = Column(String, primary_key=True, nullable=False)  # ex.: "2026/1"
     ano = Column(Integer, nullable=False)
     semestre = Column(Integer, nullable=False)  # 1 ou 2
     descricao = Column(String, nullable=True)
     is_atual = Column(Boolean, default=False, nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DemandaSnapshot(Base):
+    """
+    Snapshot imutável dos cálculos de demanda (Grupos A, B, C) por período letivo e usuário.
+
+    Garante isolamento estrito entre usuários: um coordenador não visualiza nem altera
+    os dados e semestres de outro coordenador.
+    """
+
+    __tablename__ = "demanda_snapshot"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    usuario_id = Column(Integer, nullable=True, index=True, default=1)
+    periodo_codigo = Column(String, nullable=False)
+    curso_codigo = Column(String, nullable=False)
+    conceito_id = Column(String, nullable=False)
+    grupo_a_qtd = Column(Integer, nullable=False, default=0)
+    grupo_b_qtd = Column(Integer, nullable=False, default=0)
+    grupo_c_qtd = Column(Integer, nullable=False, default=0)
+    grupo_a_prob = Column(Float, nullable=False, default=0.0)
+    grupo_c_prob = Column(Float, nullable=False, default=0.0)
+    demanda_estimada = Column(Float, nullable=False, default=0.0)
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("usuario_id", "periodo_codigo", "curso_codigo", "conceito_id", name="uq_snapshot_usuario_periodo_curso_conceito"),
+        Index("ix_snapshot_usuario_periodo_curso", "usuario_id", "periodo_codigo", "curso_codigo"),
+    )
+
+
 
