@@ -126,8 +126,12 @@ não é confiável nestes dados).
 
 ```
 demanda_estimada(disciplina, curso) =
-    |Grupo A| + |Grupo B| + Σ probabilidade_aprovacao(aluno) para aluno em Grupo C
+    Σ probabilidade_reprovacao(aluno) para aluno em Grupo A
+  + |Grupo B|
+  + Σ probabilidade_aprovacao(aluno)  para aluno em Grupo C
 ```
+
+O Grupo A não é somado como contagem bruta porque apenas alunos que **reprovarem** gerarão nova demanda no próximo semestre. Alunos aprovados saem da disciplina. Ver RN10.
 
 ## RN09 — Estimativa de probabilidade de aprovação (Grupo C) — Nível 1 (MVP)
 
@@ -137,3 +141,23 @@ disciplina** (mesmo valor para todos os alunos do Grupo C nessa
 disciplina). Refinamentos condicionados ao histórico individual do aluno
 (Nível 2) ou a notas parciais do semestre corrente (Nível 3) ficam fora do
 escopo do MVP.
+
+## RN10 — Estimativa de probabilidade de reprovação (Grupo A) — Nível 1 (MVP)
+
+Solicitado pela coordenadora na revisão final: o Grupo A não deve ser
+contado como demanda certa — alunos que já cursam a disciplina agora só
+gerarão demanda futura se **reprovarem**.
+
+Para o MVP (Nível 1), a probabilidade de reprovação de cada aluno é:
+
+```
+probabilidade_reprovacao = 1 - taxa_historica_aprovacao(disciplina)
+```
+
+Sendo a `taxa_historica_aprovacao` a mesma função já usada para o Grupo C
+(`probabilidade_aprovacao_nivel1`), calculada sobre todo o histórico de
+alunos que já concluíram a disciplina (aprovados + reprovados).
+
+Estrutura análoga à do Grupo C: cada aluno do Grupo A retorna um objeto com
+`matricula` e `probabilidade_reprovacao`, preparado para receber cálculo
+individual (Nível 2) quando o sistema evoluir.

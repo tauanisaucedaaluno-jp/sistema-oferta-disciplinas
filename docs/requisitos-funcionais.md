@@ -44,7 +44,8 @@ automaticamente quais disciplinas são candidatas (aquelas cuja
 periodicidade diverge do semestre avaliado).
 
 **RF07.** Para cada disciplina candidata e curso, o sistema deve calcular
-o **Grupo A** (alunos matriculados na disciplina no período atual).
+o **Grupo A** (alunos cursando a disciplina no período atual, com probabilidade
+estimada de reprovação — ver RN10).
 
 **RF08.** Para cada disciplina candidata e curso, o sistema deve calcular
 o **Grupo B** (alunos aptos — cumpriram todos os pré-requisitos — e não
@@ -56,11 +57,15 @@ probabilidade estimada de aprovação).
 
 **RF10.** O sistema deve estimar a probabilidade de aprovação de um aluno
 do Grupo C usando, no mínimo, a taxa histórica de aprovação da disciplina
-(Nível 1, ver ADR correspondente em `docs/`).
+(Nível 1, ver RN09).
+
+**RF10.1.** O sistema deve estimar a probabilidade de reprovação de um aluno
+do Grupo A usando a taxa histórica de reprovação da disciplina (1 - taxa histórica de aprovação)
+(Nível 1, ver RN10).
 
 **RF11.** O sistema deve calcular a demanda total estimada por
-(disciplina, curso) como a soma do Grupo A, Grupo B e a soma das
-probabilidades de aprovação do Grupo C.
+(disciplina, curso) como a soma das probabilidades de reprovação do Grupo A,
+o Grupo B e a soma das probabilidades de aprovação do Grupo C (ver RN08).
 
 **RF12.** O sistema deve consolidar a demanda por disciplina quando ela for
 compartilhada entre múltiplos cursos, exibindo também a quebra por curso.

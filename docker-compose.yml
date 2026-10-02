@@ -1,0 +1,25 @@
+# Sobe só o banco de dados. O backend (FastAPI) e o frontend (React) você
+# roda direto na sua máquina durante o desenvolvimento (mais fácil de
+# depurar) — ver docs/COMO-RODAR.md.
+#
+# Uso:
+#   docker compose up -d      # sobe o Postgres em background
+#   docker compose down       # derruba
+#   docker compose down -v    # derruba E apaga os dados (recomeçar do zero)
+
+services:
+  db:
+    image: postgres:16
+    container_name: oferta-disciplinas-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: oferta
+      POSTGRES_PASSWORD: oferta_dev_local
+      POSTGRES_DB: oferta_disciplinas
+    ports:
+      - "5432:5432"
+    volumes:
+      - oferta_disciplinas_dbdata:/var/lib/postgresql/data
+
+volumes:
+  oferta_disciplinas_dbdata:

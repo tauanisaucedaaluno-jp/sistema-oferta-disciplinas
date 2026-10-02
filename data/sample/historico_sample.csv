@@ -1,0 +1,11 @@
+matrícula;cod_curso;versão PPC;ano;período;cod_ativ_curric;nome_ativ_curric;situação na disciplina;situação da matícula
+18010001;CC;2018;2018;1. Semestre;AL0001;CALCULO I;Aprovado com nota;Aluno Regular
+18010001;CC;2018;2018;2. Semestre;AL0002;CALCULO II;Aprovado com nota;Aluno Regular
+18010001;CC;2018;2019;1. Semestre;AL0003;CALCULO III;Aprovado com nota;Aluno Regular
+23010002;CC;2023;2023;1. Semestre;AL0363;CALCULO I;Aprovado com nota;Aluno Regular
+23010002;CC;2023;2023;2. Semestre;AL0364;CALCULO II;Reprovado com nota;Aluno Regular
+23010002;CC;2023;2024;1. Semestre;AL0364;CALCULO II;Matricula;Aluno Regular
+24010003;CC;2023;2024;1. Semestre;AL0363;CALCULO I;Matricula;Aluno Regular
+24010004;CC;2023;2024;1. Semestre;AL0363;CALCULO I;Reprovado com nota;Abandono
+24010005;CC;2023;2024;1. Semestre;AL0363;CALCULO I;Aprovado com nota;Aluno Regular
+24010005;CC;2023;2024;1. Semestre;AL0102;PROGRAMACAO I;Matricula;Aluno Regular

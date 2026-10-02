@@ -36,16 +36,19 @@ A documentação completa do projeto está organizada em dois lugares:
 
 ## Status do projeto
 
-🚧 Em fase de especificação — modelagem de dados e contratos definidos a
-partir dos CSVs reais de currículo e histórico escolar. Desenvolvimento
-ainda não iniciado.
+✅ Em fase de testes e ajustes finais — O desenvolvimento do backend (FastAPI) e frontend (React) já foi concluído. O sistema agora está passando pela revisão final da coordenadora e os últimos detalhes estão sendo alinhados para a implantação.
 
 ## Estrutura do repositório
 
 ```
 ├── docs/              # Documentação técnica (ver docs/README.md)
-├── etl/               # Scripts de importação dos CSVs (a criar)
 ├── src/                # Motor de regras: Grupos A/B/C, probabilidade (a criar)
+│  ├── backend/       # FastAPI — API REST + motor de regras
+│  │    ├── api/       # Rotas e endpoints
+│  │    ├── core/      # Motor de cálculo (Grupos A/B/C)
+│  │    └── db/        # Models SQLAlchemy + migrations Alembic
+│  └── frontend/      # React — painel de gestão
+├── etl/               # Scripts de importação dos CSVs (a criar)
 ├── data/
 │   ├── raw/           # Dados reais — NUNCA versionado (.gitignore)
 │   └── sample/        # Dados fictícios para desenvolvimento/testes

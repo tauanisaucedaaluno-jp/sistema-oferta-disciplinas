@@ -222,6 +222,7 @@ erDiagram
   ALUNO ||--o{ HISTORICO : possui
   CURSO ||--o{ HISTORICO : contextualiza
   ALUNO }o--|| CURSO : pertence_a
+  USUARIO ||--o{ LOG_ACESSO : realiza
 
   CURSO {
     string codigo PK
@@ -263,6 +264,21 @@ erDiagram
     string situacao
     float nota
   }
+  USUARIO {
+    int id PK
+    string email UK
+    string senha_hash
+    string papel
+    boolean ativo
+    datetime criado_em
+  }
+  LOG_ACESSO {
+    int id PK
+    int usuario_id FK
+    string acao
+    string detalhe
+    datetime criado_em
+  }
 ```
 
 **Notas de modelagem:**
@@ -296,6 +312,12 @@ erDiagram
   reconhecido (ex.: erro de digitação no CSV, disciplina descontinuada sem
   substituta clara) ficam sem `conceito_id` e são reportados como exceção
   pelo ETL (RF05), não descartados silenciosamente.
+- **`USUARIO` e `LOG_ACESSO` gerenciam credenciais e auditoria** — a tabela
+  `usuario` atende ao requisito funcional de login e autenticação dos
+  coordenadores (RF13), e a tabela `log_acesso` atende ao requisito de auditoria
+  e rastreamento das ações administrativas (RNF05). As senhas são sempre salvas
+  usando hashing criptográfico seguro (bcrypt) e o acesso é registrado em
+  cada operação sensível.
 
 
 ## 7. Regras de negócio implementadas (resumo)
