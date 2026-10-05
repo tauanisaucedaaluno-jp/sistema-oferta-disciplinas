@@ -17,16 +17,24 @@ app = FastAPI(
     version="0.1.0",
 )
 
+from config import settings
 from db.database import engine, Base
 import db.models
 
 Base.metadata.create_all(bind=engine)
 
-# Libera o frontend (React, rodando em outra porta durante o desenvolvimento)
-# a chamar esta API. Em produção, restrinja allow_origins ao domínio real.
+# Libera o frontend (local e produção na Vercel) a chamar esta API
+allowed_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+if settings.frontend_url:
+    allowed_origins.append(settings.frontend_url.rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # porta padrão do Vite
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

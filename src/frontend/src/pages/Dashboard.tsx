@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import logoImg from "../assets/logo.png";
+import { API_BASE } from "../apiConfig";
 
 interface DemandaPorCurso {
   curso_codigo: string;
@@ -59,8 +60,6 @@ interface DashboardProps {
   onLogout: () => void;
   onSelectDisciplina: (conceitoId: string, cursoCodigo: string, periodo: string) => void;
 }
-
-const API_BASE = "http://localhost:8000";
 
 export default function Dashboard({
   token,

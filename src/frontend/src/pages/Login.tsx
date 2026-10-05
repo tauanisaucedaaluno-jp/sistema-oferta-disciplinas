@@ -1,12 +1,11 @@
 import React, { useState } from "react";
 import logoImg from "../assets/logo.png";
+import { API_BASE } from "../apiConfig";
 
 interface LoginProps {
   onLoginSuccess: (token: string) => void;
   onIrParaDefinirSenha?: (token?: string) => void;
 }
-
-const API_BASE = "http://localhost:8000";
 
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [tab, setTab] = useState<"login" | "cadastrar">("login");

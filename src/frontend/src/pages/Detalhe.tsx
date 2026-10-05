@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import logoImg from "../assets/logo.png";
+import { API_BASE } from "../apiConfig";
 
 interface AlunoComProbabilidade {
   matricula: string;
@@ -30,8 +31,6 @@ interface DetalheProps {
   periodo: string;
   onBack: () => void;
 }
-
-const API_BASE = "http://localhost:8000";
 
 function getMatricula(item: any): string {
   if (item === null || item === undefined) return "Desconhecido";

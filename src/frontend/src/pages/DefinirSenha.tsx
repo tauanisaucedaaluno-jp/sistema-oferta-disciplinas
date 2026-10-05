@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from "react";
 import logoImg from "../assets/logo.png";
+import { API_BASE } from "../apiConfig";
 
 interface DefinirSenhaProps {
   initialToken?: string | null;
   onLoginSuccess: (token: string) => void;
   onVoltarLogin: () => void;
 }
-
-const API_BASE = "http://localhost:8000";
 
 export default function DefinirSenha({ initialToken, onLoginSuccess, onVoltarLogin }: DefinirSenhaProps) {
   const [token, setToken] = useState<string>("");
