@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     historico_ano_corte: int = 2016
     frontend_url: str = "http://localhost:5173"
+    # Vazio: qualquer e-mail pode cadastrar e entrar (desenvolvimento).
+    # Preenchido: só esses e-mails, separados por vírgula (produção).
+    allowed_emails: str = ""
 
     # Configurações de SMTP para envio real de e-mails
     smtp_server: Optional[str] = None

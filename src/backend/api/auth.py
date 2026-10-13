@@ -164,28 +164,43 @@ def _limpar_falhas(email: str):
     _tentativas_falha.pop(email, None)
 
 
+def _exigir_email_permitido(email: str) -> None:
+    """Recusa o e-mail quando ALLOWED_EMAILS está preenchida e ele não consta nela."""
+    bruto = (settings.allowed_emails or "").strip()
+    if not bruto:
+        return
+    permitidos = {parte.strip().lower() for parte in bruto.split(",") if parte.strip()}
+    if email.strip().lower() not in permitidos:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Este e-mail não está autorizado a acessar o sistema.",
+        )
+
+
 @router.post("/login", response_model=Token)
 def login_json(credentials: LoginRequest, db: Session = Depends(get_db)):
     """Endpoint de login aceitando JSON (e-mail e senha)."""
     from api.deps import registrar_acesso
-    _verificar_bloqueio(credentials.email)
-    usuario = db.query(Usuario).filter(Usuario.email == credentials.email).first()
+    email = credentials.email.strip().lower()
+    _exigir_email_permitido(email)
+    _verificar_bloqueio(email)
+    usuario = db.query(Usuario).filter(Usuario.email == email).first()
     if not usuario or not verificar_senha(credentials.senha, usuario.senha_hash):
-        _registrar_falha(credentials.email)
-        registrar_acesso(db, "login_falha", f"Email: {credentials.email}")
+        _registrar_falha(email)
+        registrar_acesso(db, "login_falha", f"Email: {email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="E-mail ou senha incorretos",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not usuario.ativo:
-        registrar_acesso(db, "login_falha", f"Usuário inativo: {credentials.email}")
+        registrar_acesso(db, "login_falha", f"Usuário inativo: {email}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Usuário inativo",
         )
-    _limpar_falhas(credentials.email)
-    registrar_acesso(db, "login_sucesso", f"Email: {credentials.email}", usuario.id)
+    _limpar_falhas(email)
+    registrar_acesso(db, "login_sucesso", f"Email: {email}", usuario.id)
     access_token = criar_token_acesso(data={"sub": usuario.email, "role": usuario.papel})
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -193,24 +208,26 @@ def login_json(credentials: LoginRequest, db: Session = Depends(get_db)):
 def login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """Endpoint de login padrão OAuth2 (para testes interativos no Swagger)."""
     from api.deps import registrar_acesso
-    _verificar_bloqueio(form_data.username)
-    usuario = db.query(Usuario).filter(Usuario.email == form_data.username).first()
+    email = form_data.username.strip().lower()
+    _exigir_email_permitido(email)
+    _verificar_bloqueio(email)
+    usuario = db.query(Usuario).filter(Usuario.email == email).first()
     if not usuario or not verificar_senha(form_data.password, usuario.senha_hash):
-        _registrar_falha(form_data.username)
-        registrar_acesso(db, "login_falha", f"Email: {form_data.username}")
+        _registrar_falha(email)
+        registrar_acesso(db, "login_falha", f"Email: {email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="E-mail ou senha incorretos",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not usuario.ativo:
-        registrar_acesso(db, "login_falha", f"Usuário inativo: {form_data.username}")
+        registrar_acesso(db, "login_falha", f"Usuário inativo: {email}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Usuário inativo",
         )
-    _limpar_falhas(form_data.username)
-    registrar_acesso(db, "login_sucesso", f"Email: {form_data.username}", usuario.id)
+    _limpar_falhas(email)
+    registrar_acesso(db, "login_sucesso", f"Email: {email}", usuario.id)
     access_token = criar_token_acesso(data={"sub": usuario.email, "role": usuario.papel})
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -249,6 +266,7 @@ def solicitar_acesso(req: SolicitarAcessoRequest, db: Session = Depends(get_db))
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Informe um endereço de e-mail válido.",
         )
+    _exigir_email_permitido(email_limpo)
 
     usuario = db.query(Usuario).filter(Usuario.email == email_limpo).first()
     if not usuario:
@@ -358,6 +376,7 @@ def cadastrar_usuario(req: CadastroRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Informe um endereço de e-mail institucional válido.",
         )
+    _exigir_email_permitido(email_limpo)
 
     if not req.senha or len(req.senha) < 6:
         raise HTTPException(

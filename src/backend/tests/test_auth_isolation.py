@@ -183,6 +183,39 @@ def test_cadastro_direto_na_plataforma(client_db):
     assert res_dup.status_code == 400
 
 
+def test_allowed_emails_restringe_cadastro_e_login(client_db, monkeypatch):
+    """Com ALLOWED_EMAILS preenchida, só o e-mail da lista cadastra, solicita acesso e entra."""
+    client, _, _ = client_db
+    monkeypatch.setattr(settings, "allowed_emails", "natalia@unipampa.edu.br")
+
+    res_cadastro = client.post(
+        "/auth/cadastrar",
+        json={"email": "outro@unipampa.edu.br", "senha": "senhaSegura123!"},
+    )
+    assert res_cadastro.status_code == 403
+
+    res_solicitar = client.post("/auth/solicitar-acesso", json={"email": "outro@unipampa.edu.br"})
+    assert res_solicitar.status_code == 403
+
+    res_login_outro = client.post(
+        "/auth/login",
+        json={"email": "coordenador1@unipampa.edu.br", "senha": "qualquer"},
+    )
+    assert res_login_outro.status_code == 403
+
+    res_ok = client.post(
+        "/auth/cadastrar",
+        json={"email": "Natalia@unipampa.edu.br", "senha": "senhaSegura123!"},
+    )
+    assert res_ok.status_code == 200
+
+    res_login = client.post(
+        "/auth/login",
+        json={"email": "Natalia@unipampa.edu.br", "senha": "senhaSegura123!"},
+    )
+    assert res_login.status_code == 200
+
+
 def test_novo_semestre_nasce_zerado_sem_puxar_2026_1(client_db):
     """
     Garante que ao criar um novo semestre, seus dados nascem 100% ZERADOS,
