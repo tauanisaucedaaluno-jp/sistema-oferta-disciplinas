@@ -1,6 +1,7 @@
 import csv
 import io
 from collections import defaultdict
+from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
