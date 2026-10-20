@@ -259,6 +259,10 @@ export default function Dashboard({
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          onLogout();
+          return;
+        }
         const errData = await response.json().catch(() => ({}));
         throw new Error(errData.detail || "Erro ao importar dados acadêmicos.");
       }
